@@ -22,7 +22,7 @@ case class UserIdAndAddress(userId: String, btcAddress: String)
 case class PaymentReceived(userId: String, amount: Satoshi, txid: String, depth: Long)
 case class BTCDeposit(id: Long, btcAddress: String, outIndex: Long, txid: String, amount: Long, depth: Long, stamp: Long, status: Long)
 
-class ZMQSupervisor(vals: Vals, db: PostgresProfile.backend.Database) extends Actor { me =>
+class SwapInProcessor(vals: Vals, db: PostgresProfile.backend.Database) extends Actor { me =>
   val processedBlocks: Cache[java.lang.Integer, java.lang.Long] = Tools.makeExpireAfterAccessCache(1440 * 60).maximumSize(500000).build[java.lang.Integer, java.lang.Long]
   val recentRequests: Cache[ByteVector, UserIdAndAddress] = Tools.makeExpireAfterAccessCache(1440).maximumSize(5000000).build[ByteVector, UserIdAndAddress]
   val zmqActor: ActorRef = context actorOf Props(classOf[ZMQActor], vals.bitcoinAPI, vals.btcZMQApi, vals.rewindBlocks)

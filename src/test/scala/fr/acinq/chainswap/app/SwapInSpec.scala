@@ -4,7 +4,7 @@ import akka.actor.{ActorSystem, Props}
 import fr.acinq.bitcoin._
 import slick.jdbc.PostgresProfile.api._
 import fr.acinq.chainswap.app.dbo.{BTCDeposits, Blocking, Users}
-import fr.acinq.chainswap.app.zmq.{PaymentReceived, UserIdAndAddress, ZMQListener, ZMQSupervisor}
+import fr.acinq.chainswap.app.zmq.{PaymentReceived, UserIdAndAddress, ZMQListener, SwapInProcessor}
 import org.scalatest.funsuite.AnyFunSuite
 import akka.pattern.ask
 
@@ -47,7 +47,7 @@ class SwapInSpec extends AnyFunSuite {
     TestUtils.resetEntireDatabase()
     implicit val system: ActorSystem = ActorSystem("test-actor-system")
     val eventListener = TestProbe()
-    val zmqSupervisor = eventListener childActorOf Props(classOf[ZMQSupervisor], Config.vals, Config.db)
+    val zmqSupervisor = eventListener childActorOf Props(classOf[SwapInProcessor], Config.vals, Config.db)
 
     val rawTx1ConfirmedAtBlock = 1720707
     val rawTx1 = "0100000001d2ecbeeee1e307835be483f1c2c5671f1a107e10e07da84ab27e6957d3a283e5000000006b483045022100deee31270085e1ea00f6872f489c552e8c8ba5351433a070b51db382abfdfcd9" +
