@@ -3,7 +3,6 @@ package fr.acinq.chainswap.app
 import net.ceedubs.ficus.Ficus._
 import net.ceedubs.ficus.readers.ArbitraryTypeReader._
 import com.typesafe.config.{Config => Configuration, ConfigFactory}
-
 import wf.bitcoin.javabitcoindrpcclient.BitcoinJSONRPCClient
 import com.google.common.cache.CacheBuilder
 import org.postgresql.util.PSQLException

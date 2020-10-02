@@ -27,7 +27,7 @@ object Users {
   final val tableName = "users"
   val model = TableQuery[Users]
   type DbType = (Long, String, String)
-  private val insert = for (u <- model) yield (u.btcAddress, u.btcAddress, u.accountId)
+  private val insert = for (u <- model) yield (u.btcAddress, u.accountId)
   private def findByBtcAddress(btcAddress: RepString) = model.filter(_.btcAddress === btcAddress).map(_.accountId)
   val findByBtcAddressCompiled = Compiled(findByBtcAddress _)
   val insertCompiled = Compiled(insert)
@@ -60,9 +60,9 @@ object BTCDeposits {
   """
 
   // Insert which silently ignores duplicate records
-  def insert(btcAddress: String, outIdx: Long, txid: String, tks: Double, depth: Long) = sqlu"""
-    INSERT INTO #${BTCDeposits.tableName}(btc_address, out_index, txid, tokens, depth, stamp, status)
-    VALUES ($btcAddress, $outIdx, $txid, $tks, $depth, ${System.currentTimeMillis}, $UNCLAIMED)
+  def insert(btcAddress: String, outIdx: Long, txid: String, sat: Double, depth: Long) = sqlu"""
+    INSERT INTO #${BTCDeposits.tableName}(btc_address, out_index, txid, sat, depth, stamp, status)
+    VALUES ($btcAddress, $outIdx, $txid, $sat, $depth, ${System.currentTimeMillis}, $UNCLAIMED)
     ON CONFLICT DO NOTHING
   """
 
