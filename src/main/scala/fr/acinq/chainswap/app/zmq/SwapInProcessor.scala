@@ -20,7 +20,7 @@ import scala.util.Try
 
 case class UserIdAndAddress(userId: String, btcAddress: String)
 case class PaymentReceived(userId: String, amount: Satoshi, txid: String, depth: Long)
-case class BTCDeposit(id: Long, btcAddress: String, outIndex: Long, txid: String, amount: Long, depth: Long, stamp: Long, status: Long)
+case class BTCDeposit(id: Long, btcAddress: String, outIndex: Long, txid: String, amount: Long, depth: Long, stamp: Long)
 
 class SwapInProcessor(vals: Vals, db: PostgresProfile.backend.Database) extends Actor { me =>
   val processedBlocks: Cache[java.lang.Integer, java.lang.Long] = Tools.makeExpireAfterAccessCache(1440 * 60).maximumSize(500000).build[java.lang.Integer, java.lang.Long]

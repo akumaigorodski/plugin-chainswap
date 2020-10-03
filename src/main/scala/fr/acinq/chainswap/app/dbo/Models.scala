@@ -45,13 +45,9 @@ object BTCDeposits {
   val tableName = "btc_deposits"
   val model = TableQuery[BTCDeposits]
 
-  final val UNCLAIMED = 1L
-  final val PROCESSING = 2L
-  final val CLAIMED = 3L
-
-  type DbType = (Long, String, Long, String, Long, Long, Long, Long)
-  private def findUserUnclaimed(btcAddress: RepString, threshold: RepLong) = model.filter(d => d.btcAddress === btcAddress && d.depth >= threshold && d.status === UNCLAIMED).map(_.sat).sum
-  private def findAllWaiting(threshold: RepLong, limit: RepLong) = model.filter(d => d.depth < threshold && d.status === UNCLAIMED && d.stamp > limit)
+  type DbType = (Long, String, Long, String, Long, Long, Long)
+  private def findUserUnclaimed(btcAddress: RepString, threshold: RepLong) = model.filter(d => d.btcAddress === btcAddress && d.depth >= threshold).map(_.sat).sum
+  private def findAllWaiting(threshold: RepLong, limit: RepLong) = model.filter(d => d.depth < threshold && d.stamp > limit)
   private def findDepthUpdatable(id: RepLong) = model.filter(_.id === id).map(_.depth)
 
   def clearUp = sqlu"""
@@ -61,8 +57,8 @@ object BTCDeposits {
 
   // Insert which silently ignores duplicate records
   def insert(btcAddress: String, outIdx: Long, txid: String, sat: Double, depth: Long) = sqlu"""
-    INSERT INTO #${BTCDeposits.tableName}(btc_address, out_index, txid, sat, depth, stamp, status)
-    VALUES ($btcAddress, $outIdx, $txid, $sat, $depth, ${System.currentTimeMillis}, $UNCLAIMED)
+    INSERT INTO #${BTCDeposits.tableName}(btc_address, out_index, txid, sat, depth, stamp)
+    VALUES ($btcAddress, $outIdx, $txid, $sat, $depth, ${System.currentTimeMillis})
     ON CONFLICT DO NOTHING
   """
 
@@ -79,10 +75,9 @@ class BTCDeposits(tag: Tag) extends Table[BTCDeposits.DbType](tag, BTCDeposits.t
   def sat: Rep[Long] = column[Long]("sat")
   def depth: Rep[Long] = column[Long]("depth")
   def stamp: Rep[Long] = column[Long]("stamp")
-  def status: Rep[Long] = column[Long]("status")
 
   // We need this index to prevent double insertion (and double deposit) for txs which are seen in mempool first and then in a block
   def btcAddressOutIndexTxidIdx: Index = index("btc_deposits__btc_address__out_index__txid__idx", (btcAddress, outIndex, txid), unique = true)
-  def depthStampStatusIdx: Index = index("btc_deposits__depth__stamp__status__idx", (depth, status, stamp), unique = false)
-  def * = (id, btcAddress, outIndex, txid, sat, depth, stamp, status)
+  def depthStampIdx: Index = index("btc_deposits__depth__stamp__idx", (depth, stamp), unique = false)
+  def * = (id, btcAddress, outIndex, txid, sat, depth, stamp)
 }

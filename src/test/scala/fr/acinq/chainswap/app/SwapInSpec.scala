@@ -43,6 +43,8 @@ class SwapInSpec extends AnyFunSuite {
     assert(address1 == address)
   }
 
+  // This test requires a running testnet bitcoind
+
   test("On-chain deposits are processed correctly") {
     TestUtils.resetEntireDatabase()
     implicit val system: ActorSystem = ActorSystem("test-actor-system")
