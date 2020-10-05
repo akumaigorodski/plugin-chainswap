@@ -19,13 +19,12 @@ import scala.util.Try
 
 
 case class UserIdAndAddress(userId: String, btcAddress: String)
-case class PaymentReceived(userId: String, amount: Satoshi, txid: String, depth: Long)
+case class ChainDepositReceived(userId: String, amount: Satoshi, txid: String, depth: Long)
 case class BTCDeposit(id: Long, btcAddress: String, outIndex: Long, txid: String, amount: Long, depth: Long, stamp: Long)
 
-class SwapInProcessor(vals: Vals, db: PostgresProfile.backend.Database) extends Actor { me =>
-  val processedBlocks: Cache[java.lang.Integer, java.lang.Long] = Tools.makeExpireAfterAccessCache(1440 * 60).maximumSize(500000).build[java.lang.Integer, java.lang.Long]
+class IncomingChainTxProcessor(vals: Vals, swapInProcessor: ActorRef, zmq: ActorRef, db: PostgresProfile.backend.Database) extends Actor { me =>
+  val processedBlocks: Cache[java.lang.Integer, java.lang.Long] = Tools.makeExpireAfterAccessCache(1440 * 60).maximumSize(100000).build[java.lang.Integer, java.lang.Long]
   val recentRequests: Cache[ByteVector, UserIdAndAddress] = Tools.makeExpireAfterAccessCache(1440).maximumSize(5000000).build[ByteVector, UserIdAndAddress]
-  val zmqActor: ActorRef = context actorOf Props(classOf[ZMQActor], vals.bitcoinAPI, vals.btcZMQApi, vals.rewindBlocks)
 
   private val onAnyDatabaseError = new DuplicateInsertMatcher[Unit] {
     def onOtherError(error: Throwable): Unit = println(s"TXDB error=$error")
@@ -39,7 +38,7 @@ class SwapInProcessor(vals: Vals, db: PostgresProfile.backend.Database) extends 
 
       txid = tx.txid.toHex
       _ = Blocking.txWrite(BTCDeposits.insert(btcAddress, outIdx.toLong, txid, amount.toLong, 0L), db)
-    } context.parent ! PaymentReceived(userId, amount, txid, depth = 0L)
+    } swapInProcessor ! ChainDepositReceived(userId, amount, txid, depth = 0L)
 
     override def onNewBlock(block: Block): Unit =
       if (Option(processedBlocks getIfPresent block.height).isEmpty)
@@ -77,15 +76,14 @@ class SwapInProcessor(vals: Vals, db: PostgresProfile.backend.Database) extends 
         depth <- getConfs(btcDeposit.txid, btcDeposit.outIndex) if depth >= vals.depthThreshold
         userId <- Blocking.txRead(Users.findByBtcAddressCompiled(btcDeposit.btcAddress).result, db)
         _ = Blocking.txWrite(BTCDeposits.findDepthUpdatableCompiled(btcDeposit.id).update(depth), db)
-      } context.parent ! PaymentReceived(userId, Satoshi(btcDeposit.amount), btcDeposit.txid, depth)
+      } swapInProcessor ! ChainDepositReceived(userId, Satoshi(btcDeposit.amount), btcDeposit.txid, depth)
 
       // Prevent this block from being processed twice
       processedBlocks.put(block.height, System.currentTimeMillis)
     }
   }
 
-  zmqActor ! processor
-  zmqActor ! ZMQActorInit
+  zmq ! processor
 
   def stringAddressToP2PKH(address: String): ByteVector = {
     val (_, keyHash) = Base58Check.decode(address)

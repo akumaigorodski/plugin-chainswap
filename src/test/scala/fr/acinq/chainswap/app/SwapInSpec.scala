@@ -4,7 +4,7 @@ import akka.actor.{ActorSystem, Props}
 import fr.acinq.bitcoin._
 import slick.jdbc.PostgresProfile.api._
 import fr.acinq.chainswap.app.dbo.{BTCDeposits, Blocking, Users}
-import fr.acinq.chainswap.app.zmq.{PaymentReceived, UserIdAndAddress, ZMQListener, SwapInProcessor}
+import fr.acinq.chainswap.app.zmq.{ChainDepositReceived, IncomingChainTxProcessor, UserIdAndAddress, ZMQActor, ZMQActorInit, ZMQListener}
 import org.scalatest.funsuite.AnyFunSuite
 import akka.pattern.ask
 
@@ -14,6 +14,9 @@ import akka.testkit.TestProbe
 
 
 class SwapInSpec extends AnyFunSuite {
+
+  // All these tests require a locally running pg instance
+
   test("Database integrity") {
     TestUtils.resetEntireDatabase()
   }
@@ -49,7 +52,9 @@ class SwapInSpec extends AnyFunSuite {
     TestUtils.resetEntireDatabase()
     implicit val system: ActorSystem = ActorSystem("test-actor-system")
     val eventListener = TestProbe()
-    val zmqSupervisor = eventListener childActorOf Props(classOf[SwapInProcessor], Config.vals, Config.db)
+    val zmqActor = system actorOf Props(classOf[ZMQActor], Config.vals.bitcoinAPI, Config.vals.btcZMQApi, Config.vals.rewindBlocks)
+    val zmqSupervisor = system actorOf Props(classOf[IncomingChainTxProcessor], Config.vals, eventListener.ref, zmqActor, Config.db)
+    zmqActor ! ZMQActorInit
 
     val rawTx1ConfirmedAtBlock = 1720707
     val rawTx1 = "0100000001d2ecbeeee1e307835be483f1c2c5671f1a107e10e07da84ab27e6957d3a283e5000000006b483045022100deee31270085e1ea00f6872f489c552e8c8ba5351433a070b51db382abfdfcd9" +
@@ -78,20 +83,20 @@ class SwapInSpec extends AnyFunSuite {
     listener.onNewTx(Transaction.read(rawTx2))
     synchronized(wait(500))
 
-    val event1 = eventListener.expectMsgType[PaymentReceived]
-    val event2 = eventListener.expectMsgType[PaymentReceived]
+    val event1 = eventListener.expectMsgType[ChainDepositReceived]
+    val event2 = eventListener.expectMsgType[ChainDepositReceived]
     assert(event1.txid == Transaction.read(rawTx1).txid.toHex)
     assert(event2.txid == Transaction.read(rawTx2).txid.toHex)
     assert(event1.depth == 0L)
     assert(event2.depth == 0L)
 
     // Simulate some busy work
-    assert(Blocking.txRead(BTCDeposits.findUserUnclaimedCompiled(rawAddress1, 1L).result, Config.db).isEmpty)
+    assert(Blocking.txRead(BTCDeposits.findByAddressCompleteCompiled(rawAddress1, 1L).result, Config.db).isEmpty)
     (171868 to 172068).foreach(num => listener.onNewBlock(Config.vals.bitcoinAPI.getBlock(num)))
     listener.onNewBlock(Config.vals.bitcoinAPI.getBlock(rawTx1ConfirmedAtBlock))
-    assert(eventListener.expectMsgType[PaymentReceived].amount == Satoshi(3560000))
+    assert(eventListener.expectMsgType[ChainDepositReceived].amount == Satoshi(3560000))
 
-    assert(Blocking.txRead(BTCDeposits.findUserUnclaimedCompiled(rawAddress1, 1L).result, Config.db).contains(3560000))
+    assert(Blocking.txRead(BTCDeposits.findByAddressCompleteCompiled(rawAddress1, 1L).result, Config.db).contains(3560000))
     assert(Blocking.txRead(BTCDeposits.findAllWaitingCompiled(2L, 0L).result, Config.db).size == 1)
 
     val cleanedResult = Blocking.txRead(BTCDeposits.model.map(_.depth).result, Config.db)
@@ -99,7 +104,7 @@ class SwapInSpec extends AnyFunSuite {
 
     // Simulate malfuction: same block sent twice
     listener.onNewBlock(Config.vals.bitcoinAPI.getBlock(rawTx1ConfirmedAtBlock))
-    assert(Blocking.txRead(BTCDeposits.findUserUnclaimedCompiled(rawAddress1, 1L).result, Config.db).contains(3560000))
+    assert(Blocking.txRead(BTCDeposits.findByAddressCompleteCompiled(rawAddress1, 1L).result, Config.db).contains(3560000))
     assert(Blocking.txRead(BTCDeposits.findAllWaitingCompiled(2L, 0L).result, Config.db).size == 1)
     val cleanedResult1 = Blocking.txRead(BTCDeposits.model.map(_.depth).result, Config.db)
     assert(cleanedResult.count(_ > Config.vals.depthThreshold) == 1 && cleanedResult1.size == 2)
@@ -108,8 +113,8 @@ class SwapInSpec extends AnyFunSuite {
     (171868 to 172068).foreach(num => listener.onNewBlock(Config.vals.bitcoinAPI.getBlock(num)))
     listener.onNewBlock(Config.vals.bitcoinAPI.getBlock(rawTx1ConfirmedAtBlock))
     synchronized(wait(500L))
-    assert(Blocking.txRead(BTCDeposits.findUserUnclaimedCompiled(rawAddress1, 1L).result, Config.db).contains(3560000))
-    assert(Blocking.txRead(BTCDeposits.findUserUnclaimedCompiled(rawAddress2, 1L).result, Config.db).isEmpty)
+    assert(Blocking.txRead(BTCDeposits.findByAddressCompleteCompiled(rawAddress1, 1L).result, Config.db).contains(3560000))
+    assert(Blocking.txRead(BTCDeposits.findByAddressCompleteCompiled(rawAddress2, 1L).result, Config.db).isEmpty)
     assert(Blocking.txRead(BTCDeposits.findAllWaitingCompiled(2L, 0L).result, Config.db).size == 1)
     val cleanedResult2 = Blocking.txRead(BTCDeposits.model.map(_.depth).result, Config.db)
     assert(cleanedResult.count(_ > Config.vals.depthThreshold) == 1 && cleanedResult2.size == 2)

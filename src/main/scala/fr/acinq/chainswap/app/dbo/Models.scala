@@ -23,11 +23,12 @@ object Blocking {
   def txWrite[T](act: DBIOAction[T, NoStream, Effect.Write], db: Database): T = Await.result(db.run(act.transactionally), span)
 }
 
+
 object Users {
   final val tableName = "users"
   val model = TableQuery[Users]
   type DbType = (Long, String, String)
-  private val insert = for (u <- model) yield (u.btcAddress, u.accountId)
+  private val insert = for (x <- model) yield (x.btcAddress, x.accountId)
   private def findByBtcAddress(btcAddress: RepString) = model.filter(_.btcAddress === btcAddress).map(_.accountId)
   val findByBtcAddressCompiled = Compiled(findByBtcAddress _)
   val insertCompiled = Compiled(insert)
@@ -46,8 +47,8 @@ object BTCDeposits {
   val model = TableQuery[BTCDeposits]
 
   type DbType = (Long, String, Long, String, Long, Long, Long)
-  private def findUserUnclaimed(btcAddress: RepString, threshold: RepLong) = model.filter(d => d.btcAddress === btcAddress && d.depth >= threshold).map(_.sat).sum
-  private def findAllWaiting(threshold: RepLong, limit: RepLong) = model.filter(d => d.depth < threshold && d.stamp > limit)
+  private def findByAddressComplete(btcAddress: RepString, threshold: RepLong) = model.filter(x => x.btcAddress === btcAddress && x.depth >= threshold).map(_.sat).sum
+  private def findAllWaiting(threshold: RepLong, limit: RepLong) = model.filter(x => x.depth < threshold && x.stamp > limit)
   private def findDepthUpdatable(id: RepLong) = model.filter(_.id === id).map(_.depth)
 
   def clearUp = sqlu"""
@@ -62,7 +63,7 @@ object BTCDeposits {
     ON CONFLICT DO NOTHING
   """
 
-  val findUserUnclaimedCompiled = Compiled(findUserUnclaimed _)
+  val findByAddressCompleteCompiled = Compiled(findByAddressComplete _)
   val findDepthUpdatableCompiled = Compiled(findDepthUpdatable _)
   val findAllWaitingCompiled = Compiled(findAllWaiting _)
 }
@@ -81,3 +82,63 @@ class BTCDeposits(tag: Tag) extends Table[BTCDeposits.DbType](tag, BTCDeposits.t
   def depthStampIdx: Index = index("btc_deposits__depth__stamp__idx", (depth, stamp), unique = false)
   def * = (id, btcAddress, outIndex, txid, sat, depth, stamp)
 }
+
+
+object Account2LNWithdrawals {
+  val model = TableQuery[Account2LNWithdrawals]
+
+  final val PENDING = 1L
+  final val SUCCEEDED = 2L
+  final val FAILED = 3L
+
+  type DbType = (Long, String, String, Long, Long, Long, Long)
+  private val insert = for (x <- model) yield (x.accountId, x.paymentId, x.reserveSat, x.paymentSat, x.stamp, x.status)
+  private def findByAccountStatus(accountId: RepString, status: RepLong) = model.filter(x => x.accountId === accountId && x.status === status)
+  val findByAccountStatusCompiled = Compiled(findByAccountStatus _)
+  val insertCompiled = Compiled(insert)
+}
+
+class Account2LNWithdrawals(tag: Tag) extends Table[Account2LNWithdrawals.DbType](tag, "account_ln_withdrawals") {
+  def id: Rep[Long] = column[Long]("id", O.PrimaryKey, O.AutoInc)
+  def accountId: Rep[String] = column[String]("account_id")
+  def paymentId: Rep[String] = column[String]("payment_id", O.Unique)
+  def reserveSat: Rep[Long] = column[Long]("reserve_sat")
+  def paymentSat: Rep[Long] = column[Long]("payment_sat")
+  def stamp: Rep[Long] = column[Long]("stamp")
+  def status: Rep[Long] = column[Long]("status")
+
+  def accountIdStatusIdx: Index = index("account_ln_withdrawals__account_id__status__idx", (accountId, status), unique = false)
+  def * = (id, accountId, paymentId, reserveSat, paymentSat, stamp, status)
+}
+
+
+//object LN2BTCWithdrawals {
+//  val model = TableQuery[LN2BTCWithdrawals]
+//
+//  final val WAITING = 1L
+//  final val EXECUTED = 2L
+//  final val CANCELLED = 3L
+//
+//  type DbType = (Long, String, String, Long, Long, Long, Long)
+//  private val insert = for (u <- model) yield (u.accountId, u.paymentId, u.serviceFeeSat, u.baseSat, u.stamp, u.status)
+//  private def findByAccountStatus(accountId: RepString, status: RepLong) = model.filter(u => u.accountId === accountId && u.status === status)
+//  val findByAccountStatusCompiled = Compiled(findByAccountStatus _)
+//  val insertCompiled = Compiled(insert)
+//}
+//
+//class LN2BTCWithdrawals(tag: Tag) extends Table[LN2BTCWithdrawals.DbType](tag, "ln_btc_withdrawals") {
+//  def id: Rep[Long] = column[Long]("id", O.PrimaryKey, O.AutoInc)
+//  def accountId: Rep[String] = column[String]("account_id")
+//  def paymentId: Rep[String] = column[String]("payment_id", O.Unique)
+//  def serviceFeeSat: Rep[Long] = column[Long]("service_fee_sat")
+//  def baseSat: Rep[Long] = column[Long]("base_sat")
+//  def stamp: Rep[Long] = column[Long]("stamp")
+//  def status: Rep[Long] = column[Long]("status")
+//
+//  def accountIdStatusIdx: Index = index("account_id__status__idx", (accountId, status), unique = false)
+//  def * = (id, accountId, paymentId, serviceFeeSat, baseSat, stamp, status)
+//}
+
+/*
+payment hash, send amount, user fee, target address, txid (may be empty), status (pending, executed, failed)
+ */
