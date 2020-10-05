@@ -1,9 +1,9 @@
 package fr.acinq.chainswap.app
 
-import akka.actor.ActorRef
 import fr.acinq.bitcoin.{ByteVector32, Satoshi}
 import fr.acinq.eclair.MilliSatoshi
 import scodec.bits.ByteVector
+import akka.actor.ActorRef
 
 
 case class UserIdAndAddress(userId: String, btcAddress: String)

@@ -138,11 +138,11 @@ class SwapInProcessor(vals: Vals, kit: Kit) extends Actor with Logging {
     val pendingDeposits1: PendingDepositsList = pendingDeposits.get(userId)
 
     val successfulWithdrawalSum1: MilliSatoshi = successfulWithdrawalSum.get(userId)
-    val completeDepositsSum1: Satoshi = completeDepositSum.get(userId)
+    val completeDepositSum1: Satoshi = completeDepositSum.get(userId)
 
     val totalPendingAmount = MilliSatoshi(pendingPayments.sum)
     val totalPendingReserve = MilliSatoshi(pendingReserves.sum)
-    val balance = completeDepositsSum1 - successfulWithdrawalSum1 - totalPendingAmount - totalPendingReserve
+    val balance = completeDepositSum1 - successfulWithdrawalSum1 - totalPendingReserve - totalPendingAmount
     SwapInState(balance, balance - balance * vals.lnMaxFeePct, totalPendingReserve, totalPendingAmount, pendingDeposits1)
   }
 }
