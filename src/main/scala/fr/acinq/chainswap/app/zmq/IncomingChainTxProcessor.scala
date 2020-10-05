@@ -5,22 +5,17 @@ import slick.jdbc.PostgresProfile.api._
 import scala.jdk.CollectionConverters._
 import scala.collection.parallel.CollectionConverters._
 
-import fr.acinq.chainswap.app.{Tools, Vals}
-import akka.actor.{Actor, ActorRef, OneForOneStrategy, Props}
+import fr.acinq.chainswap.app.{BTCDeposit, ChainDepositReceived, Tools, UserIdAndAddress, Vals}
 import fr.acinq.chainswap.app.dbo.{BTCDeposits, Blocking, Users}
+import akka.actor.{Actor, ActorRef}
+
 import wf.bitcoin.javabitcoindrpcclient.BitcoindRpcClient.Block
 import fr.acinq.chainswap.app.Tools.DuplicateInsertMatcher
-import scala.concurrent.duration.DurationInt
-import akka.actor.SupervisorStrategy.Resume
 import com.google.common.cache.Cache
 import slick.jdbc.PostgresProfile
 import scodec.bits.ByteVector
 import scala.util.Try
 
-
-case class UserIdAndAddress(userId: String, btcAddress: String)
-case class ChainDepositReceived(userId: String, amount: Satoshi, txid: String, depth: Long)
-case class BTCDeposit(id: Long, btcAddress: String, outIndex: Long, txid: String, amount: Long, depth: Long, stamp: Long)
 
 class IncomingChainTxProcessor(vals: Vals, swapInProcessor: ActorRef, zmq: ActorRef, db: PostgresProfile.backend.Database) extends Actor { me =>
   val processedBlocks: Cache[java.lang.Integer, java.lang.Long] = Tools.makeExpireAfterAccessCache(1440 * 60).maximumSize(100000).build[java.lang.Integer, java.lang.Long]
@@ -35,6 +30,7 @@ class IncomingChainTxProcessor(vals: Vals, swapInProcessor: ActorRef, zmq: Actor
     override def onNewTx(tx: Transaction): Unit = for {
       Tuple2(TxOut(amount, pubKeyScript), outIdx) <- tx.txOut.zipWithIndex
       UserIdAndAddress(userId, btcAddress) <- Option(recentRequests getIfPresent pubKeyScript)
+      if amount.toLong >= vals.minChainDepositSat
 
       txid = tx.txid.toHex
       _ = Blocking.txWrite(BTCDeposits.insert(btcAddress, outIdx.toLong, txid, amount.toLong, 0L), db)
@@ -55,7 +51,7 @@ class IncomingChainTxProcessor(vals: Vals, swapInProcessor: ActorRef, zmq: Actor
         transaction <- block.tx.asScala.flatMap(getTx).par
         Tuple2(TxOut(amount, pubKeyScript), outIdx) <- transaction.txOut.zipWithIndex
         List(OP_DUP, OP_HASH160, OP_PUSHDATA(hash, _), OP_EQUALVERIFY, OP_CHECKSIG) <- parse(pubKeyScript)
-        if 20 == hash.size
+        if amount.toLong >= vals.minChainDepositSat && 20 == hash.size
 
         txid = transaction.txid.toHex
         btcAddress = Base58Check.encode(vals.addressPrefix, hash)
@@ -66,8 +62,8 @@ class IncomingChainTxProcessor(vals: Vals, swapInProcessor: ActorRef, zmq: Actor
       // Remove inserts which do not match any user address
       Blocking.txWrite(BTCDeposits.clearUp, db)
 
+      val lookBackPeriod = System.currentTimeMillis - vals.lookBackPeriodMsecs
       // Select specifically PENDING txs, importantly NOT the ones which exceed our depth threshold
-      val lookBackPeriod = System.currentTimeMillis - 1000L * 3600 * 24 * vals.lookBackPeriodDays
       val query = BTCDeposits.findAllWaitingCompiled(vals.depthThreshold, lookBackPeriod)
 
       for {
@@ -75,7 +71,7 @@ class IncomingChainTxProcessor(vals: Vals, swapInProcessor: ActorRef, zmq: Actor
         // Relies on deposit still pending in our db, but having enough confs in bitcoind
         depth <- getConfs(btcDeposit.txid, btcDeposit.outIndex) if depth >= vals.depthThreshold
         userId <- Blocking.txRead(Users.findByBtcAddressCompiled(btcDeposit.btcAddress).result, db)
-        _ = Blocking.txWrite(BTCDeposits.findDepthUpdatableCompiled(btcDeposit.id).update(depth), db)
+        _ = Blocking.txWrite(BTCDeposits.findAllDepthUpdatableCompiled(btcDeposit.id).update(depth), db)
       } swapInProcessor ! ChainDepositReceived(userId, Satoshi(btcDeposit.amount), btcDeposit.txid, depth)
 
       // Prevent this block from being processed twice
@@ -98,14 +94,5 @@ class IncomingChainTxProcessor(vals: Vals, swapInProcessor: ActorRef, zmq: Actor
     // Map pubKeyScript because it requires less computations when comparing against tx stream
     case user: UserIdAndAddress => recentRequests.put(stringAddressToP2PKH(user.btcAddress), user)
     case Symbol("processor") => sender ! processor
-  }
-
-  override def supervisorStrategy: OneForOneStrategy = OneForOneStrategy(-1, 5.seconds) {
-    // ZMQ connection may be lost or an exception may be thrown while processing data
-    // so we always wait for 5 seconds and try to reconnect again if that happens
-    case processingError: Throwable =>
-      processingError.printStackTrace()
-      Thread sleep 5000L
-      Resume
   }
 }

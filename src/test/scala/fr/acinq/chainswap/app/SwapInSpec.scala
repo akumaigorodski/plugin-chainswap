@@ -4,7 +4,7 @@ import akka.actor.{ActorSystem, Props}
 import fr.acinq.bitcoin._
 import slick.jdbc.PostgresProfile.api._
 import fr.acinq.chainswap.app.dbo.{BTCDeposits, Blocking, Users}
-import fr.acinq.chainswap.app.zmq.{ChainDepositReceived, IncomingChainTxProcessor, UserIdAndAddress, ZMQActor, ZMQActorInit, ZMQListener}
+import fr.acinq.chainswap.app.zmq.{IncomingChainTxProcessor, ZMQActor, ZMQActorInit, ZMQListener}
 import org.scalatest.funsuite.AnyFunSuite
 import akka.pattern.ask
 
@@ -91,12 +91,12 @@ class SwapInSpec extends AnyFunSuite {
     assert(event2.depth == 0L)
 
     // Simulate some busy work
-    assert(Blocking.txRead(BTCDeposits.findByAddressCompleteCompiled(rawAddress1, 1L).result, Config.db).isEmpty)
+    assert(Blocking.txRead(BTCDeposits.findSumCompleteForUserCompiled(accountId1, 1L).result, Config.db).isEmpty)
     (171868 to 172068).foreach(num => listener.onNewBlock(Config.vals.bitcoinAPI.getBlock(num)))
     listener.onNewBlock(Config.vals.bitcoinAPI.getBlock(rawTx1ConfirmedAtBlock))
     assert(eventListener.expectMsgType[ChainDepositReceived].amount == Satoshi(3560000))
 
-    assert(Blocking.txRead(BTCDeposits.findByAddressCompleteCompiled(rawAddress1, 1L).result, Config.db).contains(3560000))
+    assert(Blocking.txRead(BTCDeposits.findSumCompleteForUserCompiled(accountId1, 1L).result, Config.db).contains(3560000))
     assert(Blocking.txRead(BTCDeposits.findAllWaitingCompiled(2L, 0L).result, Config.db).size == 1)
 
     val cleanedResult = Blocking.txRead(BTCDeposits.model.map(_.depth).result, Config.db)
@@ -104,7 +104,7 @@ class SwapInSpec extends AnyFunSuite {
 
     // Simulate malfuction: same block sent twice
     listener.onNewBlock(Config.vals.bitcoinAPI.getBlock(rawTx1ConfirmedAtBlock))
-    assert(Blocking.txRead(BTCDeposits.findByAddressCompleteCompiled(rawAddress1, 1L).result, Config.db).contains(3560000))
+    assert(Blocking.txRead(BTCDeposits.findSumCompleteForUserCompiled(accountId1, 1L).result, Config.db).contains(3560000))
     assert(Blocking.txRead(BTCDeposits.findAllWaitingCompiled(2L, 0L).result, Config.db).size == 1)
     val cleanedResult1 = Blocking.txRead(BTCDeposits.model.map(_.depth).result, Config.db)
     assert(cleanedResult.count(_ > Config.vals.depthThreshold) == 1 && cleanedResult1.size == 2)
@@ -113,10 +113,12 @@ class SwapInSpec extends AnyFunSuite {
     (171868 to 172068).foreach(num => listener.onNewBlock(Config.vals.bitcoinAPI.getBlock(num)))
     listener.onNewBlock(Config.vals.bitcoinAPI.getBlock(rawTx1ConfirmedAtBlock))
     synchronized(wait(500L))
-    assert(Blocking.txRead(BTCDeposits.findByAddressCompleteCompiled(rawAddress1, 1L).result, Config.db).contains(3560000))
-    assert(Blocking.txRead(BTCDeposits.findByAddressCompleteCompiled(rawAddress2, 1L).result, Config.db).isEmpty)
+    assert(Blocking.txRead(BTCDeposits.findSumCompleteForUserCompiled(accountId1, 1L).result, Config.db).contains(3560000))
+    assert(Blocking.txRead(BTCDeposits.findSumCompleteForUserCompiled(accountId2, 1L).result, Config.db).isEmpty)
     assert(Blocking.txRead(BTCDeposits.findAllWaitingCompiled(2L, 0L).result, Config.db).size == 1)
     val cleanedResult2 = Blocking.txRead(BTCDeposits.model.map(_.depth).result, Config.db)
     assert(cleanedResult.count(_ > Config.vals.depthThreshold) == 1 && cleanedResult2.size == 2)
+
+    assert(Blocking.txRead(BTCDeposits.findWaitingForUserCompiled(accountId2, 1L, 0L).result, Config.db).map(BTCDeposit.tupled).map(_.toPendingDeposit).head.btcAddress == rawAddress2)
   }
 }

@@ -38,6 +38,8 @@ class Users(tag: Tag) extends Table[Users.DbType](tag, Users.tableName) {
   def id: Rep[Long] = column[Long]("id", O.PrimaryKey, O.AutoInc)
   def btcAddress: Rep[String] = column[String]("btc_address", O.Unique)
   def accountId: Rep[String] = column[String]("account_id")
+
+  def accountIdIdx: Index = index(s"account_id__idx", accountId, unique = false)
   def * = (id, btcAddress, accountId)
 }
 
@@ -47,9 +49,12 @@ object BTCDeposits {
   val model = TableQuery[BTCDeposits]
 
   type DbType = (Long, String, Long, String, Long, Long, Long)
-  private def findByAddressComplete(btcAddress: RepString, threshold: RepLong) = model.filter(x => x.btcAddress === btcAddress && x.depth >= threshold).map(_.sat).sum
   private def findAllWaiting(threshold: RepLong, limit: RepLong) = model.filter(x => x.depth < threshold && x.stamp > limit)
-  private def findDepthUpdatable(id: RepLong) = model.filter(_.id === id).map(_.depth)
+  private def findAllDepthUpdatable(id: RepLong) = model.filter(_.id === id).map(_.depth)
+
+  private def findForUser(accountId: RepString) = Users.model.filter(_.accountId === accountId).join(BTCDeposits.model).on(_.btcAddress === _.btcAddress).map(_._2)
+  private def findWaitingForUser(accountId: RepString, threshold: RepLong, limit: RepLong) = findForUser(accountId).filter(deposit => deposit.depth < threshold && deposit.stamp > limit)
+  private def findSumCompleteForUser(accountId: RepString, threshold: RepLong) = findForUser(accountId).filter(_.depth >= threshold).map(_.sat).sum
 
   def clearUp = sqlu"""
      DELETE FROM #${BTCDeposits.tableName} B WHERE NOT EXISTS
@@ -63,8 +68,9 @@ object BTCDeposits {
     ON CONFLICT DO NOTHING
   """
 
-  val findByAddressCompleteCompiled = Compiled(findByAddressComplete _)
-  val findDepthUpdatableCompiled = Compiled(findDepthUpdatable _)
+  val findSumCompleteForUserCompiled = Compiled(findSumCompleteForUser _)
+  val findAllDepthUpdatableCompiled = Compiled(findAllDepthUpdatable _)
+  val findWaitingForUserCompiled = Compiled(findWaitingForUser _)
   val findAllWaitingCompiled = Compiled(findAllWaiting _)
 }
 
@@ -92,53 +98,28 @@ object Account2LNWithdrawals {
   final val FAILED = 3L
 
   type DbType = (Long, String, String, Long, Long, Long, Long)
-  private val insert = for (x <- model) yield (x.accountId, x.paymentId, x.reserveSat, x.paymentSat, x.stamp, x.status)
-  private def findByAccountStatus(accountId: RepString, status: RepLong) = model.filter(x => x.accountId === accountId && x.status === status)
-  val findByAccountStatusCompiled = Compiled(findByAccountStatus _)
+  private val insert = for (x <- model) yield (x.accountId, x.paymentId, x.feeReserveMsat, x.paymentMsat, x.stamp, x.status)
+  private def findStatusFeeByIdUpdatable(paymentId: RepString) = model.filter(x => x.paymentId === paymentId).map(w => w.status -> w.feeReserveMsat)
+  private def findSuccessfulWithdrawalSum(accountId: RepString) = model.filter(x => x.status === SUCCEEDED && x.accountId === accountId).map(w => w.paymentMsat + w.feeReserveMsat).sum
+  private def findPendingWithdrawalsByAccount(accountId: RepString) = model.filter(x => x.status === PENDING && x.accountId === accountId).map(w => w.paymentMsat -> w.feeReserveMsat)
+  private def findAccountById(paymentId: RepString) = model.filter(_.paymentId === paymentId).map(_.accountId)
+
   val insertCompiled = Compiled(insert)
+  val findStatusFeeByIdUpdatableCompiled = Compiled(findStatusFeeByIdUpdatable _)
+  val findSuccessfulWithdrawalSumCompiled = Compiled(findSuccessfulWithdrawalSum _)
+  val findPendingWithdrawalsByAccountCompiled = Compiled(findPendingWithdrawalsByAccount _)
+  val findAccountByIdCompiled = Compiled(findAccountById _)
 }
 
 class Account2LNWithdrawals(tag: Tag) extends Table[Account2LNWithdrawals.DbType](tag, "account_ln_withdrawals") {
   def id: Rep[Long] = column[Long]("id", O.PrimaryKey, O.AutoInc)
   def accountId: Rep[String] = column[String]("account_id")
   def paymentId: Rep[String] = column[String]("payment_id", O.Unique)
-  def reserveSat: Rep[Long] = column[Long]("reserve_sat")
-  def paymentSat: Rep[Long] = column[Long]("payment_sat")
+  def feeReserveMsat: Rep[Long] = column[Long]("fee_reserve_msat")
+  def paymentMsat: Rep[Long] = column[Long]("payment_msat")
   def stamp: Rep[Long] = column[Long]("stamp")
   def status: Rep[Long] = column[Long]("status")
 
-  def accountIdStatusIdx: Index = index("account_ln_withdrawals__account_id__status__idx", (accountId, status), unique = false)
-  def * = (id, accountId, paymentId, reserveSat, paymentSat, stamp, status)
+  def statusAccountIdIdx: Index = index("account_ln_withdrawals__status__account_id__idx", (status, accountId), unique = false)
+  def * = (id, accountId, paymentId, feeReserveMsat, paymentMsat, stamp, status)
 }
-
-
-//object LN2BTCWithdrawals {
-//  val model = TableQuery[LN2BTCWithdrawals]
-//
-//  final val WAITING = 1L
-//  final val EXECUTED = 2L
-//  final val CANCELLED = 3L
-//
-//  type DbType = (Long, String, String, Long, Long, Long, Long)
-//  private val insert = for (u <- model) yield (u.accountId, u.paymentId, u.serviceFeeSat, u.baseSat, u.stamp, u.status)
-//  private def findByAccountStatus(accountId: RepString, status: RepLong) = model.filter(u => u.accountId === accountId && u.status === status)
-//  val findByAccountStatusCompiled = Compiled(findByAccountStatus _)
-//  val insertCompiled = Compiled(insert)
-//}
-//
-//class LN2BTCWithdrawals(tag: Tag) extends Table[LN2BTCWithdrawals.DbType](tag, "ln_btc_withdrawals") {
-//  def id: Rep[Long] = column[Long]("id", O.PrimaryKey, O.AutoInc)
-//  def accountId: Rep[String] = column[String]("account_id")
-//  def paymentId: Rep[String] = column[String]("payment_id", O.Unique)
-//  def serviceFeeSat: Rep[Long] = column[Long]("service_fee_sat")
-//  def baseSat: Rep[Long] = column[Long]("base_sat")
-//  def stamp: Rep[Long] = column[Long]("stamp")
-//  def status: Rep[Long] = column[Long]("status")
-//
-//  def accountIdStatusIdx: Index = index("account_id__status__idx", (accountId, status), unique = false)
-//  def * = (id, accountId, paymentId, serviceFeeSat, baseSat, stamp, status)
-//}
-
-/*
-payment hash, send amount, user fee, target address, txid (may be empty), status (pending, executed, failed)
- */
