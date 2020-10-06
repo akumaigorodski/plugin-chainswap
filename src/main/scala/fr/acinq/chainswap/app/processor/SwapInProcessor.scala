@@ -1,4 +1,4 @@
-package fr.acinq.chainswap.app.zmq
+package fr.acinq.chainswap.app.processor
 
 import fr.acinq.eclair._
 import fr.acinq.chainswap.app._

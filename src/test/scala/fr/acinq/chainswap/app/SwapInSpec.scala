@@ -4,7 +4,7 @@ import akka.actor.{ActorSystem, Props}
 import fr.acinq.bitcoin._
 import slick.jdbc.PostgresProfile.api._
 import fr.acinq.chainswap.app.dbo.{BTCDeposits, Blocking, Users}
-import fr.acinq.chainswap.app.zmq.{IncomingChainTxProcessor, ZMQActor, ZMQActorInit, ZMQListener}
+import fr.acinq.chainswap.app.processor.{IncomingChainTxProcessor, ZMQActor, ZMQActorInit, ZMQListener}
 import org.scalatest.funsuite.AnyFunSuite
 import akka.pattern.ask
 

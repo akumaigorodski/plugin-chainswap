@@ -1,4 +1,4 @@
-package fr.acinq.chainswap.app.zmq
+package fr.acinq.chainswap.app.processor
 
 import fr.acinq.bitcoin._
 import slick.jdbc.PostgresProfile.api._

@@ -1,4 +1,4 @@
-package fr.acinq.chainswap.app.zmq
+package fr.acinq.chainswap.app.processor
 
 import akka.actor.{Actor, Cancellable}
 import org.zeromq.{SocketType, ZContext, ZMQ, ZMsg}
