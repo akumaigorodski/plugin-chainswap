@@ -20,8 +20,8 @@ import java.util.UUID
 
 
 class SwapInProcessor(vals: Vals, kit: Kit) extends Actor with Logging {
-  context.system.eventStream.subscribe(self, classOf[PaymentFailed])
-  context.system.eventStream.subscribe(self, classOf[PaymentSent])
+  context.system.eventStream.subscribe(channel = classOf[PaymentFailed], subscriber = self)
+  context.system.eventStream.subscribe(channel = classOf[PaymentSent], subscriber = self)
 
   type PendingAndReserve = (Long, Long)
   type PendingWithdrawalsSeq = Seq[PendingAndReserve]
@@ -79,11 +79,11 @@ class SwapInProcessor(vals: Vals, kit: Kit) extends Actor with Logging {
     case message: WithdrawBTCLN =>
       Try(PaymentRequest read message.paymentRequest) match {
         case Success(paymentRequest) if paymentRequest.amount.isEmpty =>
-          logger.info(s"PLGN ChainSwap, WithdrawBTCLN fail=amount-less invoice, account=${message.userId}")
+          logger.info(s"PLGN ChainSwap, WithdrawBTCLN, fail=amount-less invoice, account=${message.userId}")
           sender ! WithdrawBTCLNDenied(message.userId, message.paymentRequest, "Invoice should have an amount")
 
         case Success(paymentRequest) if paymentRequest.amount.get < MilliSatoshi(vals.lnMinWithdrawMsat) =>
-          logger.info(s"PLGN ChainSwap, WithdrawBTCLN fail=invoice amount below min ${vals.lnMinWithdrawMsat} msat, account=${message.userId}")
+          logger.info(s"PLGN ChainSwap, WithdrawBTCLN, fail=invoice amount below min ${vals.lnMinWithdrawMsat} msat, account=${message.userId}")
           sender ! WithdrawBTCLNDenied(message.userId, message.paymentRequest, s"Invoice should have an amount larger than ${vals.lnMinWithdrawMsat} msat")
 
         case Success(pr) =>
@@ -92,24 +92,24 @@ class SwapInProcessor(vals: Vals, kit: Kit) extends Actor with Logging {
           val feeReserve = finalAmount - finalAmount * vals.lnMaxFeePct
 
           if (finalAmount > swapInState.maxWithdrawable) {
-            logger.info(s"PLGN ChainSwap, WithdrawBTCLN fail=invoice amount above max withdrawable ${swapInState.maxWithdrawable.truncateToSatoshi.toLong} sat, account=${message.userId}")
+            logger.info(s"PLGN ChainSwap, WithdrawBTCLN, fail=invoice amount above max withdrawable ${swapInState.maxWithdrawable.truncateToSatoshi.toLong} sat, account=${message.userId}")
             sender ! WithdrawBTCLNDenied(message.userId, message.paymentRequest, s"Invoice amount should not exceed max withdrawable ${swapInState.maxWithdrawable.truncateToSatoshi.toLong} sat")
           } else try {
             val routeParams = RouteCalculation.getDefaultRouteParams(kit.nodeParams.routerConf).copy(maxFeePct = vals.lnMaxFeePct)
             val spr = SendPaymentRequest(finalAmount, pr.paymentHash, pr.nodeId, kit.nodeParams.maxPaymentAttempts, paymentRequest = Some(pr), routeParams = Some(routeParams), assistedRoutes = pr.routingInfo)
-            logger.info(s"PLGN ChainSwap, WithdrawBTCLN validation success, trying to send LN with payment hash=${pr.paymentHash}, amount=${finalAmount.toLong} msat, account=${message.userId}")
+            logger.info(s"PLGN ChainSwap, WithdrawBTCLN, validation success, trying to send LN with payment hash=${pr.paymentHash}, amount=${finalAmount.toLong} msat, account=${message.userId}")
             val tuple = (message.userId, (kit.paymentInitiator ? spr).mapTo[UUID].toString, feeReserve.toLong, finalAmount.toLong, System.currentTimeMillis, Account2LNWithdrawals.PENDING)
             Blocking.txWrite(Account2LNWithdrawals.insertCompiled += tuple, Config.db)
             self ! GetAccountStatus(context.parent, message.userId)
             pendingWithdrawals.invalidate(message.userId)
           } catch {
             case error: Throwable =>
-              logger.info(s"PLGN ChainSwap, WithdrawBTCLN fail=${error.getMessage}, account=${message.userId}")
+              logger.info(s"PLGN ChainSwap, WithdrawBTCLN, fail=${error.getMessage}, account=${message.userId}")
               sender ! WithdrawBTCLNDenied(message.userId, message.paymentRequest, "Please try again later")
           }
 
         case Failure(error) =>
-          logger.info(s"PLGN ChainSwap, WithdrawBTCLN fail=${error.getMessage}, account=${message.userId}")
+          logger.info(s"PLGN ChainSwap, WithdrawBTCLN, fail=${error.getMessage}, account=${message.userId}")
           sender ! WithdrawBTCLNDenied(message.userId, message.paymentRequest, "Please try again later")
       }
 

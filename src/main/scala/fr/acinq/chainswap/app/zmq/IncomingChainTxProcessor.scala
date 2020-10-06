@@ -13,16 +13,17 @@ import wf.bitcoin.javabitcoindrpcclient.BitcoindRpcClient.Block
 import fr.acinq.chainswap.app.Tools.DuplicateInsertMatcher
 import com.google.common.cache.Cache
 import slick.jdbc.PostgresProfile
+import grizzled.slf4j.Logging
 import scodec.bits.ByteVector
 import scala.util.Try
 
 
-class IncomingChainTxProcessor(vals: Vals, swapInProcessor: ActorRef, zmq: ActorRef, db: PostgresProfile.backend.Database) extends Actor { me =>
+class IncomingChainTxProcessor(vals: Vals, swapInProcessor: ActorRef, zmq: ActorRef, db: PostgresProfile.backend.Database) extends Actor with Logging { me =>
   val processedBlocks: Cache[java.lang.Integer, java.lang.Long] = Tools.makeExpireAfterAccessCache(1440 * 60).maximumSize(100000).build[java.lang.Integer, java.lang.Long]
   val recentRequests: Cache[ByteVector, UserIdAndAddress] = Tools.makeExpireAfterAccessCache(1440).maximumSize(5000000).build[ByteVector, UserIdAndAddress]
 
-  private val onAnyDatabaseError = new DuplicateInsertMatcher[Unit] {
-    def onOtherError(error: Throwable): Unit = println(s"TXDB error=$error")
+  val onAnyDatabaseError: DuplicateInsertMatcher[Unit] = new DuplicateInsertMatcher[Unit] {
+    def onOtherError(error: Throwable): Unit = logger.info(s"PLGN ChainSwap, DB, error=$error")
     def onDuplicateError: Unit = ()
   }
 

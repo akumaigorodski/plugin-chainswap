@@ -1,7 +1,7 @@
 package fr.acinq.chainswap.app
 
+import fr.acinq.eclair._
 import fr.acinq.bitcoin.{ByteVector32, Satoshi}
-import fr.acinq.eclair.MilliSatoshi
 import scodec.bits.ByteVector
 import akka.actor.ActorRef
 
@@ -20,8 +20,29 @@ case class WithdrawBTCLN(userId: String, paymentRequest: String)
 
 case class WithdrawBTCLNDenied(userId: String, paymentRequest: String, reason: String)
 
+case class ChainFeeratesFrom(userId: String)
+
+case class ChainFeeratesTo(feerates: List[BlockTargetAndFeePerKb], userId: String)
+
+case class SwapOutRequestFrom(request: SwapOutRequest, userId: String)
+
+case class SwapOutResponseTo(response: SwapOutResponse, userId: String)
+
 // Protocol messages
 
 case class PendingDeposit(btcAddress: String, txid: ByteVector32, amount: Satoshi, stamp: Long)
 
 case class SwapInState(balance: MilliSatoshi, maxWithdrawable: MilliSatoshi, activeFeeReserve: MilliSatoshi, inFlightAmount: MilliSatoshi, pendingChainDeposits: List[PendingDeposit] = Nil)
+
+
+sealed trait SwapOut
+
+case class BlockTargetAndFeePerKb(blockTarget: Int, fee: Satoshi, feerate: Long)
+
+case class SwapOutFeerates(feerates: List[BlockTargetAndFeePerKb] = Nil) extends SwapOut
+
+case class SwapOutRequest(amountSatoshis: Satoshi, bitcoinAddress: String, feerate: BlockTargetAndFeePerKb) extends SwapOut {
+  def totalInvoiceAmountToAsk: MilliSatoshi = (amountSatoshis + feerate.fee).toMilliSatoshi
+}
+
+case class SwapOutResponse(amountSatoshis: Satoshi, feeSatoshis: Satoshi, paymentRequest: String) extends SwapOut
