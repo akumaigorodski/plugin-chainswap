@@ -34,7 +34,8 @@ object Config {
 }
 
 case class Vals(btcRPCApi: String, btcZMQApi: String, rewindBlocks: Int, isTestnet: Boolean, minChainDepositSat: Long,
-                lnMaxFeePct: Double, lnMinWithdrawMsat: Long, depthThreshold: Long, lookBackPeriodDays: Long, feePerKbDivider: Double) {
+                lnMaxFeePct: Double, lnMinWithdrawMsat: Long, depthThreshold: Long, lookBackPeriodDays: Long,
+                feePerKbDivider: Double, chainBalanceReserve: Int, chainMinWithdrawSat: Long) {
 
   val addressPrefix: Byte = if (isTestnet) Base58.Prefix.PubkeyAddressTestnet else Base58.Prefix.PubkeyAddress
   val bitcoinAPI: BitcoinJSONRPCClient = new BitcoinJSONRPCClient(btcRPCApi)
