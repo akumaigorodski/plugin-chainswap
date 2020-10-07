@@ -1,6 +1,7 @@
 package fr.acinq.chainswap.app
 
 import fr.acinq.eclair._
+import scala.concurrent.duration._
 import fr.acinq.bitcoin.{ByteVector32, Satoshi}
 import scodec.bits.ByteVector
 import akka.actor.ActorRef
@@ -38,23 +39,27 @@ case class WithdrawLNBTCDenied(userId: String, bitcoinAddress: String, reason: S
 
 // Protocol messages
 
+sealed trait ProtocolMessage
+
 sealed trait SwapIn
 
-case object SwapInRequest extends SwapIn
+case object SwapInRequest extends SwapIn with ProtocolMessage
 
-case class SwapInResponse(btcAddress: String) extends SwapIn
+case class SwapInResponse(btcAddress: String) extends SwapIn with ProtocolMessage
 
-case class PendingDeposit(btcAddress: String, txid: ByteVector32, amount: Satoshi, stamp: Long)
+case class PendingDeposit(btcAddress: String, txid: ByteVector32, amount: Satoshi,
+                          stamp: Long = System.currentTimeMillis.milliseconds.toSeconds)
 
-case class SwapInState(balance: MilliSatoshi, maxWithdrawable: MilliSatoshi, activeFeeReserve: MilliSatoshi, inFlightAmount: MilliSatoshi, pendingChainDeposits: List[PendingDeposit] = Nil) extends SwapIn
+case class SwapInState(balance: MilliSatoshi, maxWithdrawable: MilliSatoshi, activeFeeReserve: MilliSatoshi,
+                       inFlightAmount: MilliSatoshi, pendingChainDeposits: List[PendingDeposit] = Nil) extends SwapIn with ProtocolMessage
 
 
 sealed trait SwapOut
 
 case class BlockTargetAndFee(blockTarget: Int, fee: Satoshi)
 
-case class SwapOutFeerates(feerates: List[BlockTargetAndFee] = Nil) extends SwapOut
+case class SwapOutFeerates(feerates: List[BlockTargetAndFee] = Nil) extends SwapOut with ProtocolMessage
 
-case class SwapOutRequest(amount: Satoshi, btcAddress: String, blockTarget: Int) extends SwapOut
+case class SwapOutRequest(amount: Satoshi, btcAddress: String, blockTarget: Int) extends SwapOut with ProtocolMessage
 
-case class SwapOutResponse(amount: Satoshi, fee: Satoshi, paymentRequest: String) extends SwapOut
+case class SwapOutResponse(amount: Satoshi, fee: Satoshi, paymentRequest: String) extends SwapOut with ProtocolMessage
