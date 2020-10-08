@@ -8,9 +8,12 @@ import fr.acinq.eclair.channel.Channel.OutgoingMessage
 import akka.actor.SupervisorStrategy.Resume
 import fr.acinq.chainswap.app.wire.Codecs
 import slick.jdbc.PostgresProfile
+
 import scala.collection.mutable
 import grizzled.slf4j.Logging
 import fr.acinq.eclair.Kit
+
+import scala.util.{Failure, Success, Try}
 
 
 class Worker(db: PostgresProfile.backend.Database, vals: Vals, kit: Kit) extends Actor with Logging {
@@ -45,10 +48,11 @@ class Worker(db: PostgresProfile.backend.Database, vals: Vals, kit: Kit) extends
       }
 
     case peerMessage: UnknownMessageReceived =>
-      Codecs.decode(peerMessage.message) match {
-        case SwapInRequest => swapInProcessor ! SwapInRequestFrom(peerMessage.nodeId.toString)
-        case msg: SwapInWithdrawRequest => swapInProcessor ! SwapInWithdrawRequestFrom(msg, peerMessage.nodeId.toString)
-        case msg: SwapOutRequest => swapOutProcessor ! SwapOutRequestFrom(msg, peerMessage.nodeId.toString)
+      Try(Codecs decode peerMessage.message) match {
+        case Success(SwapInRequest) => swapInProcessor ! SwapInRequestFrom(peerMessage.nodeId.toString)
+        case Success(msg: SwapInWithdrawRequest) => swapInProcessor ! SwapInWithdrawRequestFrom(msg, peerMessage.nodeId.toString)
+        case Success(msg: SwapOutRequest) => swapOutProcessor ! SwapOutRequestFrom(msg, peerMessage.nodeId.toString)
+        case Failure(_) => logger.info(s"PLGN ChainSwap, parsing fail, tag=${peerMessage.message.tag}")
         case _ => // Do nothing
       }
 

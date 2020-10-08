@@ -79,14 +79,14 @@ object Codecs {
   }
 
   def toUnknownMessage(message: ProtocolMessage): UnknownMessage = message match {
-    case SwapInRequest => UnknownMessage(tag = SWAP_IN_REQUEST_MESSAGE_TAG, swapInRequestCodec.encode(SwapInRequest).require.toByteVector)
-    case msg: SwapInResponse => UnknownMessage(tag = SWAP_IN_RESPONSE_MESSAGE_TAG, swapInResponseCodec.encode(msg).require.toByteVector)
-    case msg: SwapInState => UnknownMessage(tag = SWAP_IN_STATE_MESSAGE_TAG, swapInStateCodec.encode(msg).require.toByteVector)
-    case msg: SwapInWithdrawRequest => UnknownMessage(tag = SWAP_IN_WITHDRAW_REQUEST_MESSAGE_TAG, swapInWithdrawRequestCodec.encode(msg).require.toByteVector)
-    case msg: SwapInWithdrawDenied => UnknownMessage(tag = SWAP_IN_WITHDRAW_DENIED_MESSAGE_TAG, swapInWithdrawDeniedCodec.encode(msg).require.toByteVector)
-    case msg: SwapOutFeerates => UnknownMessage(tag = SWAP_OUT_FEERATES_MESSAGE_TAG, swapOutFeeratesCodec.encode(msg).require.toByteVector)
-    case msg: SwapOutRequest => UnknownMessage(tag = SWAP_OUT_REQUEST_MESSAGE_TAG, swapOutRequestCodec.encode(msg).require.toByteVector)
-    case msg: SwapOutResponse => UnknownMessage(tag = SWAP_OUT_RESPONSE_MESSAGE_TAG, swapOutResponseCodec.encode(msg).require.toByteVector)
-    case msg: SwapOutDenied => UnknownMessage(tag = SWAP_OUT_DENIED_MESSAGE_TAG, swapOutDeniedCodec.encode(msg).require.toByteVector)
+    case SwapInRequest => UnknownMessage(SWAP_IN_REQUEST_MESSAGE_TAG, swapInRequestCodec.encode(SwapInRequest).require.toByteVector)
+    case msg: SwapInResponse => UnknownMessage(SWAP_IN_RESPONSE_MESSAGE_TAG, swapInResponseCodec.encode(msg).require.toByteVector)
+    case msg: SwapInState => UnknownMessage(SWAP_IN_STATE_MESSAGE_TAG, swapInStateCodec.encode(msg).require.toByteVector)
+    case msg: SwapInWithdrawRequest => UnknownMessage(SWAP_IN_WITHDRAW_REQUEST_MESSAGE_TAG, swapInWithdrawRequestCodec.encode(msg).require.toByteVector)
+    case msg: SwapInWithdrawDenied => UnknownMessage(SWAP_IN_WITHDRAW_DENIED_MESSAGE_TAG, swapInWithdrawDeniedCodec.encode(msg).require.toByteVector)
+    case msg: SwapOutFeerates => UnknownMessage(SWAP_OUT_FEERATES_MESSAGE_TAG, swapOutFeeratesCodec.encode(msg).require.toByteVector)
+    case msg: SwapOutRequest => UnknownMessage(SWAP_OUT_REQUEST_MESSAGE_TAG, swapOutRequestCodec.encode(msg).require.toByteVector)
+    case msg: SwapOutResponse => UnknownMessage(SWAP_OUT_RESPONSE_MESSAGE_TAG, swapOutResponseCodec.encode(msg).require.toByteVector)
+    case msg: SwapOutDenied => UnknownMessage(SWAP_OUT_DENIED_MESSAGE_TAG, swapOutDeniedCodec.encode(msg).require.toByteVector)
   }
 }
