@@ -62,7 +62,6 @@ class SwapInSpec extends AnyFunSuite {
       "4f062977f425b6ce70a7b08869864c83664fcf60888ac0000000000000000226a2005990528fb62094aed94fa546d1990e8b2b3fb6613fea8aa779819132c5aa82900000000"
     val accountId1 =  "account-id-1"
     val rawAddress1 = "n3RzaNTD8LnBGkREBjSkouy5gmd2dVf7jQ" // 3560000 sat
-    println(Transaction.read(rawTx1).txid)
     Blocking.txWrite(Users.insertCompiled += (rawAddress1, accountId1), Config.db)
 
     val rawTx2 = "01000000000101b2f18998bf4b8aa19c08c78e160069eae2682753a2b5b0fa784097f4a25a712e0100000023220020016b82e8225c2fe3ee4c61a8660dc63e9cf4b55343fc46536fb212aa76af5cfcfff" +
@@ -72,7 +71,7 @@ class SwapInSpec extends AnyFunSuite {
       "4e0dd999a91f34a203f23431a5b3c9a142741233c43aad695e2bb442102436417dd00e432efaeea1c053593cfb9e0a55e35f3089d25c51d44ed0de55884210239fb974a143b44b435777fa118e34f4abd2cbd3dd7c57" +
       "d7bee2740928862cad353ae00000000"
     val accountId2 =  "account-id-2"
-    val rawAddress2 = "mv4rnyY3Su5gjcDNzbMLKBQkBicCtHUtFB" // 10000 sat, but THIS UTXO IS NOT PRESENT ANYMORE
+    val rawAddress2 = "mv4rnyY3Su5gjcDNzbMLKBQkBicCtHUtFB" // 10000 sat, but THIS UTXO IS NOT PRESENT ANYMORE (as if it was thrown out of mempool after pending long enough)
     Blocking.txWrite(Users.insertCompiled += (rawAddress2, accountId2), Config.db)
     val listener = Await.result(zmqSupervisor ? Symbol("processor"), Blocking.span).asInstanceOf[ZMQListener]
 

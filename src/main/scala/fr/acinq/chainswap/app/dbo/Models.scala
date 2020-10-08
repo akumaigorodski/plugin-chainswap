@@ -21,6 +21,11 @@ object Blocking {
   implicit val askTimeout: Timeout = Timeout(30.seconds)
   def txRead[T](act: DBIOAction[T, NoStream, Effect.Read], db: Database): T = Await.result(db.run(act.transactionally), span)
   def txWrite[T](act: DBIOAction[T, NoStream, Effect.Write], db: Database): T = Await.result(db.run(act.transactionally), span)
+
+  def createTablesIfNotExist(db: Database): Unit = {
+    val tables = Seq(Users.model, BTCDeposits.model, Account2LNWithdrawals.model).map(_.schema.createIfNotExists)
+    Await.result(db.run(DBIO.sequence(tables).transactionally), span)
+  }
 }
 
 
@@ -30,7 +35,10 @@ object Users {
   type DbType = (Long, String, String)
   private val insert = for (x <- model) yield (x.btcAddress, x.accountId)
   private def findByBtcAddress(btcAddress: RepString) = model.filter(_.btcAddress === btcAddress).map(_.accountId)
+  private def findByAccountId(accountId: RepString) = model.filter(_.accountId === accountId).map(_.btcAddress)
+
   val findByBtcAddressCompiled = Compiled(findByBtcAddress _)
+  val findByAccountIdCompiled = Compiled(findByAccountId _)
   val insertCompiled = Compiled(insert)
 }
 
@@ -39,7 +47,7 @@ class Users(tag: Tag) extends Table[Users.DbType](tag, Users.tableName) {
   def btcAddress: Rep[String] = column[String]("btc_address", O.Unique)
   def accountId: Rep[String] = column[String]("account_id")
 
-  def accountIdIdx: Index = index(s"account_id__idx", accountId, unique = false)
+  def accountIdIdx: Index = index(s"users__account_id__idx", accountId, unique = false)
   def * = (id, btcAddress, accountId)
 }
 

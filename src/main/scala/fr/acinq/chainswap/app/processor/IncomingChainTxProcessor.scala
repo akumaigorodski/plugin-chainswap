@@ -19,7 +19,7 @@ import scala.util.Try
 
 
 class IncomingChainTxProcessor(vals: Vals, swapInProcessor: ActorRef, zmq: ActorRef, db: PostgresProfile.backend.Database) extends Actor with Logging { me =>
-  val processedBlocks: Cache[java.lang.Integer, java.lang.Long] = Tools.makeExpireAfterAccessCache(1440 * 60).maximumSize(100000).build[java.lang.Integer, java.lang.Long]
+  val processedBlocks: Cache[java.lang.Integer, java.lang.Long] = Tools.makeExpireAfterAccessCache(1440 * 60).maximumSize(1000000).build[java.lang.Integer, java.lang.Long]
   val recentRequests: Cache[ByteVector, UserIdAndAddress] = Tools.makeExpireAfterAccessCache(1440).maximumSize(5000000).build[ByteVector, UserIdAndAddress]
 
   val onAnyDatabaseError: DuplicateInsertMatcher[Unit] = new DuplicateInsertMatcher[Unit] {

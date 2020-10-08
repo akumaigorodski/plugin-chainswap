@@ -2,6 +2,7 @@ package fr.acinq.chainswap.app.wire
 
 import scodec.codecs._
 import fr.acinq.chainswap.app._
+import fr.acinq.chainswap.app.ChainSwap._
 import fr.acinq.eclair.wire.CommonCodecs._
 import fr.acinq.eclair.wire.UnknownMessage
 import scodec.Codec
@@ -13,6 +14,14 @@ object Codecs {
 
   private val swapInResponseCodec: Codec[SwapInResponse] =
     ("btcAddress" | variableSizeBytes(uint16, utf8)).as[SwapInResponse]
+
+  private val swapInWithdrawRequestCodec: Codec[SwapInWithdrawRequest] =
+    ("paymentRequest" | variableSizeBytes(uint16, utf8)).as[SwapInWithdrawRequest]
+
+  private val swapInWithdrawDeniedCodec: Codec[SwapInWithdrawDenied] = (
+    ("paymentRequest" | variableSizeBytes(uint16, utf8)) ::
+      ("reason" | variableSizeBytes(uint16, utf8))
+    ).as[SwapInWithdrawDenied]
 
   private val pendingDepositCodec: Codec[PendingDeposit] = (
     ("btcAddress" | variableSizeBytes(uint16, utf8)) ::
@@ -45,27 +54,39 @@ object Codecs {
       ("blockTarget" | uint16)
     ).as[SwapOutRequest]
 
-  private val SwapOutResponseCodec: Codec[SwapOutResponse] = (
+  private val swapOutResponseCodec: Codec[SwapOutResponse] = (
     ("amount" | satoshi) ::
       ("fee" | satoshi) ::
       ("paymentRequest" | variableSizeBytes(uint16, utf8))
     ).as[SwapOutResponse]
 
+  private val swapOutDeniedCodec: Codec[SwapOutDenied] = (
+    ("btcAddress" | variableSizeBytes(uint16, utf8)) ::
+      ("reason" | variableSizeBytes(uint16, utf8))
+    ).as[SwapOutDenied]
+
+
   def decode(wrap: UnknownMessage): ProtocolMessage = wrap.tag match {
-    case 55001 => swapInRequestCodec.decode(wrap.data.toBitVector).require.value
-    case 55003 => swapInResponseCodec.decode(wrap.data.toBitVector).require.value
-    case 55005 => swapInStateCodec.decode(wrap.data.toBitVector).require.value
-    case 55007 => swapOutFeeratesCodec.decode(wrap.data.toBitVector).require.value
-    case 55009 => swapOutRequestCodec.decode(wrap.data.toBitVector).require.value
-    case 55011 => SwapOutResponseCodec.decode(wrap.data.toBitVector).require.value
+    case SWAP_IN_REQUEST_MESSAGE_TAG => swapInRequestCodec.decode(wrap.data.toBitVector).require.value
+    case SWAP_IN_RESPONSE_MESSAGE_TAG => swapInResponseCodec.decode(wrap.data.toBitVector).require.value
+    case SWAP_IN_WITHDRAW_REQUEST_MESSAGE_TAG => swapInWithdrawRequestCodec.decode(wrap.data.toBitVector).require.value
+    case SWAP_IN_WITHDRAW_DENIED_MESSAGE_TAG => swapInWithdrawDeniedCodec.decode(wrap.data.toBitVector).require.value
+    case SWAP_IN_STATE_MESSAGE_TAG => swapInStateCodec.decode(wrap.data.toBitVector).require.value
+    case SWAP_OUT_FEERATES_MESSAGE_TAG => swapOutFeeratesCodec.decode(wrap.data.toBitVector).require.value
+    case SWAP_OUT_REQUEST_MESSAGE_TAG => swapOutRequestCodec.decode(wrap.data.toBitVector).require.value
+    case SWAP_OUT_RESPONSE_MESSAGE_TAG => swapOutResponseCodec.decode(wrap.data.toBitVector).require.value
+    case SWAP_OUT_DENIED_MESSAGE_TAG => swapOutDeniedCodec.decode(wrap.data.toBitVector).require.value
   }
 
-  def encode(message: ProtocolMessage): UnknownMessage = message match {
-    case SwapInRequest => UnknownMessage(tag = 55001, swapInRequestCodec.encode(SwapInRequest).require.toByteVector)
-    case msg: SwapInResponse => UnknownMessage(tag = 55003, swapInResponseCodec.encode(msg).require.toByteVector)
-    case msg: SwapInState => UnknownMessage(tag = 55005, swapInStateCodec.encode(msg).require.toByteVector)
-    case msg: SwapOutFeerates => UnknownMessage(tag = 55007, swapOutFeeratesCodec.encode(msg).require.toByteVector)
-    case msg: SwapOutRequest => UnknownMessage(tag = 55009, swapOutRequestCodec.encode(msg).require.toByteVector)
-    case msg: SwapOutResponse => UnknownMessage(tag = 55011, SwapOutResponseCodec.encode(msg).require.toByteVector)
+  def toUnknownMessage(message: ProtocolMessage): UnknownMessage = message match {
+    case SwapInRequest => UnknownMessage(tag = SWAP_IN_REQUEST_MESSAGE_TAG, swapInRequestCodec.encode(SwapInRequest).require.toByteVector)
+    case msg: SwapInResponse => UnknownMessage(tag = SWAP_IN_RESPONSE_MESSAGE_TAG, swapInResponseCodec.encode(msg).require.toByteVector)
+    case msg: SwapInState => UnknownMessage(tag = SWAP_IN_STATE_MESSAGE_TAG, swapInStateCodec.encode(msg).require.toByteVector)
+    case msg: SwapInWithdrawRequest => UnknownMessage(tag = SWAP_IN_WITHDRAW_REQUEST_MESSAGE_TAG, swapInWithdrawRequestCodec.encode(msg).require.toByteVector)
+    case msg: SwapInWithdrawDenied => UnknownMessage(tag = SWAP_IN_WITHDRAW_DENIED_MESSAGE_TAG, swapInWithdrawDeniedCodec.encode(msg).require.toByteVector)
+    case msg: SwapOutFeerates => UnknownMessage(tag = SWAP_OUT_FEERATES_MESSAGE_TAG, swapOutFeeratesCodec.encode(msg).require.toByteVector)
+    case msg: SwapOutRequest => UnknownMessage(tag = SWAP_OUT_REQUEST_MESSAGE_TAG, swapOutRequestCodec.encode(msg).require.toByteVector)
+    case msg: SwapOutResponse => UnknownMessage(tag = SWAP_OUT_RESPONSE_MESSAGE_TAG, swapOutResponseCodec.encode(msg).require.toByteVector)
+    case msg: SwapOutDenied => UnknownMessage(tag = SWAP_OUT_DENIED_MESSAGE_TAG, swapOutDeniedCodec.encode(msg).require.toByteVector)
   }
 }
