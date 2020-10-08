@@ -7,9 +7,10 @@ import wf.bitcoin.javabitcoindrpcclient.BitcoinJSONRPCClient
 import scala.concurrent.ExecutionContext.Implicits.global
 import scala.concurrent.duration.DurationInt
 import fr.acinq.bitcoin.Transaction
+import grizzled.slf4j.Logging
 
 
-class ZMQActor(api: BitcoinJSONRPCClient, btcZMQApi: String, rewindBlocks: Int) extends Actor {
+class ZMQActor(api: BitcoinJSONRPCClient, btcZMQApi: String, rewindBlocks: Int) extends Actor with Logging {
   var lastProcessedBlockHeight: Int = api.getBlockCount - rewindBlocks
   var listeners = Set.empty[ZMQListener]
 
@@ -30,7 +31,7 @@ class ZMQActor(api: BitcoinJSONRPCClient, btcZMQApi: String, rewindBlocks: Int) 
 
     case event: ZMQ.Event => event.getEvent match {
       case ZMQ.EVENT_DISCONNECTED => throw new Exception("ZMQ connection lost")
-      case ZMQ.EVENT_CONNECTED => println("ZMQ connection established")
+      case ZMQ.EVENT_CONNECTED => logger.info("PLGN ChainSwap, ZMQ connection established")
       case _ =>
     }
 
@@ -57,7 +58,7 @@ class ZMQActor(api: BitcoinJSONRPCClient, btcZMQApi: String, rewindBlocks: Int) 
   def rescanUnseenBlocks(): Unit = {
     val currentHeight = api.getBlockCount
     val blocks = lastProcessedBlockHeight to currentHeight drop 1 map api.getBlock
-    println(s"Rescanning chain, from=$lastProcessedBlockHeight, to=$currentHeight")
+    logger.info(s"PLGN ChainSwap, rescanning chain, from=$lastProcessedBlockHeight, to=$currentHeight")
     for (block <- blocks) for (lst <- listeners) lst onNewBlock block
     lastProcessedBlockHeight = currentHeight
   }

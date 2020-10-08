@@ -84,7 +84,7 @@ class SwapInProcessor(vals: Vals, kit: Kit, db: PostgresProfile.backend.Database
           context.parent ! SwapInResponseTo(response, userId)
 
         case _ =>
-          val tuple = Tuple2(vals.bitcoinAPI.getNewAddress, userId)
+          val tuple = (vals.bitcoinAPI.getNewAddress, userId)
           Blocking.txWrite(Users.insertCompiled += tuple, db)
           self ! request
       }
