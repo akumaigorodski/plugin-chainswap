@@ -22,10 +22,13 @@ class SwapOutProcessor(vals: Vals, kit: Kit) extends Actor with Logging {
   context.system.eventStream.subscribe(channel = classOf[PaymentReceived], subscriber = self)
   context.system.scheduler.scheduleWithFixedDelay(0.seconds, 60.minutes, self, UpdateChainFeerates)
 
+  val pendingRequests: Cache[ByteVector32, SwapOutRequestAndFee] = {
+    val expiry = kit.nodeParams.paymentRequestExpiry.toMinutes.toInt + 1 // One extra minute in case of timer disparity with invoice remover
+    Tools.makeExpireAfterAccessCache(expiry).maximumSize(5000000).build[ByteVector32, SwapOutRequestAndFee]
+  }
+
   val blockTargets = List(36, 144, 1008)
   val wallet: BitcoinCoreWallet = kit.wallet.asInstanceOf[BitcoinCoreWallet]
-  val expiry: Int = kit.nodeParams.paymentRequestExpiry.toMinutes.toInt + 1 // One extra minute in case of timer disparity with Eclair's pending invoice remover
-  val pendingRequests: Cache[ByteVector32, SwapOutRequestAndFee] = Tools.makeExpireAfterAccessCache(expiry).maximumSize(5000000).build[ByteVector32, SwapOutRequestAndFee]
   implicit val timeout: Timeout = Timeout(30.seconds)
   var currentFeerates: List[BlockTargetAndFee] = Nil
 

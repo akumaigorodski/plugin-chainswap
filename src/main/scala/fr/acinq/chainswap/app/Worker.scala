@@ -85,8 +85,6 @@ class Worker(db: PostgresProfile.backend.Database, vals: Vals, kit: Kit) extends
   override def supervisorStrategy: OneForOneStrategy = OneForOneStrategy(-1, 5.seconds) {
     // ZMQ connection may be lost or an exception may be thrown while processing data
     // so we always wait for 5 seconds and try to reconnect again if that happens
-    case _: Throwable =>
-      Thread sleep 5000L
-      Resume
+    case _: Throwable => Resume
   }
 }
