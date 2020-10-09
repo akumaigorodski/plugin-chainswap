@@ -93,7 +93,7 @@ class IncomingChainTxProcessor(vals: Vals, swapInProcessor: ActorRef, zmq: Actor
 
   def receive: Receive = {
     // Map pubKeyScript because it requires less computations when comparing against tx stream
-    case user: UserIdAndAddress => recentRequests.put(stringAddressToP2PKH(user.btcAddress), user)
+    case message: UserIdAndAddress => recentRequests.put(stringAddressToP2PKH(message.btcAddress), message)
     case Symbol("processor") => sender ! processor
   }
 }

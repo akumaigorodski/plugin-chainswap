@@ -13,7 +13,7 @@ import Blocking._
 import akka.testkit.TestProbe
 
 
-class SwapInSpec extends AnyFunSuite {
+class IncomingChainTxProcessorSpec extends AnyFunSuite {
 
   // All these tests require a locally running pg instance
 
@@ -53,7 +53,7 @@ class SwapInSpec extends AnyFunSuite {
     implicit val system: ActorSystem = ActorSystem("test-actor-system")
     val eventListener = TestProbe()
     val zmqActor = system actorOf Props(classOf[ZMQActor], Config.vals.bitcoinAPI, Config.vals.btcZMQApi, Config.vals.rewindBlocks)
-    val zmqSupervisor = system actorOf Props(classOf[IncomingChainTxProcessor], Config.vals, eventListener.ref, zmqActor, Config.db)
+    val incomingChainTxProcessor = system actorOf Props(classOf[IncomingChainTxProcessor], Config.vals, eventListener.ref, zmqActor, Config.db)
     zmqActor ! ZMQActorInit
 
     val rawTx1ConfirmedAtBlock = 1720707
@@ -73,10 +73,10 @@ class SwapInSpec extends AnyFunSuite {
     val accountId2 =  "account-id-2"
     val rawAddress2 = "mv4rnyY3Su5gjcDNzbMLKBQkBicCtHUtFB" // 10000 sat, but THIS UTXO IS NOT PRESENT ANYMORE (as if it was thrown out of mempool after pending long enough)
     Blocking.txWrite(Users.insertCompiled += (rawAddress2, accountId2), Config.db)
-    val listener = Await.result(zmqSupervisor ? Symbol("processor"), Blocking.span).asInstanceOf[ZMQListener]
+    val listener = Await.result(incomingChainTxProcessor ? Symbol("processor"), Blocking.span).asInstanceOf[ZMQListener]
 
-    zmqSupervisor ! UserIdAndAddress(accountId1, rawAddress1)
-    zmqSupervisor ! UserIdAndAddress(accountId2, rawAddress2)
+    incomingChainTxProcessor ! UserIdAndAddress(accountId1, rawAddress1)
+    incomingChainTxProcessor ! UserIdAndAddress(accountId2, rawAddress2)
     synchronized(wait(500))
     listener.onNewTx(Transaction.read(rawTx1))
     listener.onNewTx(Transaction.read(rawTx2))

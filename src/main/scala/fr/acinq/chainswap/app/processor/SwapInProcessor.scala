@@ -2,7 +2,6 @@ package fr.acinq.chainswap.app.processor
 
 import fr.acinq.eclair._
 import fr.acinq.chainswap.app._
-import scala.concurrent.duration._
 import slick.jdbc.PostgresProfile.api._
 import scala.util.{Failure, Success, Try}
 import fr.acinq.eclair.{Kit, MilliSatoshi}
@@ -10,11 +9,12 @@ import com.google.common.cache.{CacheLoader, LoadingCache}
 import fr.acinq.eclair.payment.{PaymentFailed, PaymentRequest, PaymentSent}
 import fr.acinq.chainswap.app.dbo.{Account2LNWithdrawals, BTCDeposits, Blocking, Users}
 import fr.acinq.eclair.payment.send.PaymentInitiator.SendPaymentRequest
+import fr.acinq.chainswap.app.dbo.Blocking.askTimeout
 import fr.acinq.eclair.router.RouteCalculation
 import slick.jdbc.PostgresProfile
 import fr.acinq.bitcoin.Satoshi
 import grizzled.slf4j.Logging
-import akka.util.Timeout
+import scala.concurrent.Await
 import akka.actor.Actor
 import akka.pattern.ask
 import java.util.UUID
@@ -65,7 +65,6 @@ class SwapInProcessor(vals: Vals, kit: Kit, db: PostgresProfile.backend.Database
   val pendingDeposits: LoadingCache[String, PendingDepositsList] = Tools.makeExpireAfterAccessCache(1440 * 30).maximumSize(5000000).build(pendingDepositsLoader)
   val successfulWithdrawalSum: LoadingCache[String, MilliSatoshi] = Tools.makeExpireAfterAccessCache(1440 * 30).maximumSize(5000000).build(successfulWithdrawalSumLoader)
   val pendingWithdrawals: LoadingCache[String, PendingWithdrawalsSeq] = Tools.makeExpireAfterAccessCache(1440 * 30).maximumSize(5000000).build(pendingWithdrawalsLoader)
-  implicit val timeout: Timeout = Timeout(30.seconds)
 
   override def receive: Receive = {
     case AccountStatusFrom(userId) =>
@@ -99,11 +98,11 @@ class SwapInProcessor(vals: Vals, kit: Kit, db: PostgresProfile.backend.Database
       Try(PaymentRequest read request.paymentRequest) match {
         case Success(paymentRequest) if paymentRequest.amount.isEmpty =>
           logger.info(s"PLGN ChainSwap, WithdrawBTCLN, fail=amount-less invoice, account=$userId")
-          sender ! SwapInWithdrawRequestDeniedTo(request.paymentRequest, "Invoice should have an amount", userId)
+          context.parent ! SwapInWithdrawRequestDeniedTo(request.paymentRequest, "Invoice should have an amount", userId)
 
         case Success(paymentRequest) if paymentRequest.amount.get < MilliSatoshi(vals.lnMinWithdrawMsat) =>
           logger.info(s"PLGN ChainSwap, WithdrawBTCLN, fail=invoice amount below min ${vals.lnMinWithdrawMsat} msat, account=$userId")
-          sender ! SwapInWithdrawRequestDeniedTo(request.paymentRequest, s"Invoice should have an amount larger than ${vals.lnMinWithdrawMsat} msat", userId)
+          context.parent ! SwapInWithdrawRequestDeniedTo(request.paymentRequest, s"Invoice should have an amount larger than ${vals.lnMinWithdrawMsat} msat", userId)
 
         case Success(pr) =>
           val finalAmount = pr.amount.get
@@ -111,25 +110,26 @@ class SwapInProcessor(vals: Vals, kit: Kit, db: PostgresProfile.backend.Database
 
           if (finalAmount > swapInState.maxWithdrawable) {
             logger.info(s"PLGN ChainSwap, WithdrawBTCLN, fail=invoice amount above max withdrawable ${swapInState.maxWithdrawable.truncateToSatoshi.toLong} sat, account=$userId")
-            sender ! SwapInWithdrawRequestDeniedTo(request.paymentRequest, s"Invoice amount should not exceed max withdrawable ${swapInState.maxWithdrawable.truncateToSatoshi.toLong} sat", userId)
+            context.parent ! SwapInWithdrawRequestDeniedTo(request.paymentRequest, s"Invoice amount should not exceed max withdrawable ${swapInState.maxWithdrawable.truncateToSatoshi.toLong} sat", userId)
           } else try {
-            val feeReserve = finalAmount - finalAmount * vals.lnMaxFeePct
+            val feeReserve = finalAmount * vals.lnMaxFeePct
             val routeParams = RouteCalculation.getDefaultRouteParams(kit.nodeParams.routerConf).copy(maxFeePct = vals.lnMaxFeePct)
-            val spr = SendPaymentRequest(finalAmount, pr.paymentHash, pr.nodeId, kit.nodeParams.maxPaymentAttempts, paymentRequest = Some(pr), routeParams = Some(routeParams), assistedRoutes = pr.routingInfo)
             logger.info(s"PLGN ChainSwap, WithdrawBTCLN, validation success, trying to send LN with payment hash=${pr.paymentHash}, amount=${finalAmount.toLong} msat, account=$userId")
-            val tuple = (userId, (kit.paymentInitiator ? spr).mapTo[UUID].toString, feeReserve.toLong, finalAmount.toLong, System.currentTimeMillis, Account2LNWithdrawals.PENDING)
+            val spr = SendPaymentRequest(finalAmount, pr.paymentHash, pr.nodeId, kit.nodeParams.maxPaymentAttempts, paymentRequest = Some(pr), routeParams = Some(routeParams), assistedRoutes = pr.routingInfo)
+            val tuple = (userId, Await.result(kit.paymentInitiator ? spr, Blocking.span).asInstanceOf[UUID].toString, feeReserve.toLong, finalAmount.toLong, System.currentTimeMillis, Account2LNWithdrawals.PENDING)
             Blocking.txWrite(Account2LNWithdrawals.insertCompiled += tuple, db)
             pendingWithdrawals.invalidate(userId)
             self ! AccountStatusFrom(userId)
           } catch {
             case error: Throwable =>
+              error.printStackTrace()
               logger.info(s"PLGN ChainSwap, WithdrawBTCLN, fail=${error.getMessage}, account=$userId")
-              sender ! SwapInWithdrawRequestDeniedTo(request.paymentRequest, "Please try again later", userId)
+              context.parent ! SwapInWithdrawRequestDeniedTo(request.paymentRequest, "Please try again later", userId)
           }
 
         case Failure(error) =>
           logger.info(s"PLGN ChainSwap, WithdrawBTCLN, fail=${error.getMessage}, account=$userId")
-          sender ! SwapInWithdrawRequestDeniedTo(request.paymentRequest, "Please try again later", userId)
+          context.parent ! SwapInWithdrawRequestDeniedTo(request.paymentRequest, "Please try again later", userId)
       }
 
     case message: PaymentFailed =>
@@ -160,9 +160,10 @@ class SwapInProcessor(vals: Vals, kit: Kit, db: PostgresProfile.backend.Database
 
     val totalActiveReserve = MilliSatoshi(inFlightReserves.sum)
     val totalInFlightAmount = MilliSatoshi(inFlightPayments.sum)
+    val maxWithdrawFactor = 100 / (100 + 100 * vals.lnMaxFeePct)
 
     val balance = completeDepositSum1 - successfulWithdrawalSum1 - totalInFlightAmount - totalActiveReserve
-    SwapInState(balance, balance - balance * vals.lnMaxFeePct, totalActiveReserve, totalInFlightAmount, pendingDeposits1)
+    SwapInState(balance, balance * maxWithdrawFactor, totalActiveReserve, totalInFlightAmount, pendingDeposits1)
   }
 
   def isImportant(state: SwapInState): Boolean =

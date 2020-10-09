@@ -67,7 +67,7 @@ object Codecs {
 
 
   def decode(wrap: UnknownMessage): ProtocolMessage = wrap.tag match {
-    case SWAP_IN_REQUEST_MESSAGE_TAG => swapInRequestCodec.decode(wrap.data.toBitVector).require.value
+    case SWAP_IN_REQUEST_MESSAGE_TAG => swapInRequestCodec.decode(wrap.data.bits).require.value
     case SWAP_IN_RESPONSE_MESSAGE_TAG => swapInResponseCodec.decode(wrap.data.toBitVector).require.value
     case SWAP_IN_WITHDRAW_REQUEST_MESSAGE_TAG => swapInWithdrawRequestCodec.decode(wrap.data.toBitVector).require.value
     case SWAP_IN_WITHDRAW_DENIED_MESSAGE_TAG => swapInWithdrawDeniedCodec.decode(wrap.data.toBitVector).require.value
