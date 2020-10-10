@@ -16,10 +16,10 @@ class SwapOutProcessorSpec extends AnyFunSuite {
   // This requires a running bitcoind testnet with balance of 0.1 BTC
 
   test("Deposit off-chain, withdraw on-chain") {
-    TestUtils.resetEntireDatabase()
+    ChainSwapTestUtils.resetEntireDatabase()
     implicit val system: ActorSystem = ActorSystem("test-actor-system")
     val eventListener = TestProbe()(system)
-    val kit = TestUtils.testKit(eventListener.ref)(system)
+    val kit = ChainSwapTestUtils.testKit(eventListener.ref)(system)
     val oneMilSat = "lntb10m1p0czexapp5xzhg6h2wc4lm2xd7wn29gm8xla3x805x0k72t0dzvqspzgavcvesdqqxqrrsscqp79qy9qsqsp5tgftdg2r" +
       "8sgh26tt8l4e89auxddln6utfr7xl42sy4zep3cv52fqnj7l37zgckrtg7yvk7czmx8j8p4hkt5fs5r7na2vec5cap8urz4snw97q7huulp9mprcpzrx403hnxhldax2x86h3p8saccxyrual8spe8vyxv"
     val pr = PaymentRequest.read(oneMilSat)

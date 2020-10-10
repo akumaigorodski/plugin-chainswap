@@ -12,7 +12,7 @@ import slick.jdbc.PostgresProfile.api._
 
 import scala.concurrent.Await
 
-object TestUtils {
+object ChainSwapTestUtils {
   def resetEntireDatabase(): Unit = {
     val setup = DBIO.seq(
       fr.acinq.chainswap.app.dbo.Users.model.schema.dropIfExists,

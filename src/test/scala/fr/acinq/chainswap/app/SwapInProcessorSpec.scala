@@ -19,10 +19,10 @@ import scala.concurrent.Await
 
 class SwapInProcessorSpec extends AnyFunSuite {
   test("Create new address, reuse it") {
-    TestUtils.resetEntireDatabase()
+    ChainSwapTestUtils.resetEntireDatabase()
     implicit val system: ActorSystem = ActorSystem("test-actor-system")
     val eventListener = TestProbe()(system)
-    val kit = TestUtils.testKit(eventListener.ref)(system)
+    val kit = ChainSwapTestUtils.testKit(eventListener.ref)(system)
     val swapInProcessor = eventListener childActorOf Props(classOf[SwapInProcessor], Config.vals, kit, Config.db)
     val userId = "user-id-1"
 
@@ -34,10 +34,10 @@ class SwapInProcessorSpec extends AnyFunSuite {
   }
 
   test("Deposit on-chain, withdraw off-chain") {
-    TestUtils.resetEntireDatabase()
+    ChainSwapTestUtils.resetEntireDatabase()
     implicit val system: ActorSystem = ActorSystem("test-actor-system")
     val eventListener = TestProbe()(system)
-    val kit = TestUtils.testKit(eventListener.ref)(system)
+    val kit = ChainSwapTestUtils.testKit(eventListener.ref)(system)
     val zmqActor = system actorOf Props(classOf[ZMQActor], Config.vals.bitcoinAPI, Config.vals.btcZMQApi, Config.vals.rewindBlocks)
     val swapInProcessor = eventListener childActorOf Props(classOf[SwapInProcessor], Config.vals, kit, Config.db)
     val incomingChainTxProcessor = system actorOf Props(classOf[IncomingChainTxProcessor], Config.vals, swapInProcessor, zmqActor, Config.db)

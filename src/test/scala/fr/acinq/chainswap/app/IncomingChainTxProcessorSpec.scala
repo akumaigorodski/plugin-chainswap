@@ -18,11 +18,11 @@ class IncomingChainTxProcessorSpec extends AnyFunSuite {
   // All these tests require a locally running pg instance
 
   test("Database integrity") {
-    TestUtils.resetEntireDatabase()
+    ChainSwapTestUtils.resetEntireDatabase()
   }
 
   test("Removing address-unmatched btc records from db") {
-    TestUtils.resetEntireDatabase()
+    ChainSwapTestUtils.resetEntireDatabase()
     Blocking.txWrite(Users.insertCompiled += ("btc-address", "account-id-1"), Config.db)
     Blocking.txWrite(Users.insertCompiled += ("not-reverse-matched-btc-address", "account-id-2"), Config.db)
     Blocking.txWrite(BTCDeposits.insert("btc-address", 1L, "txid1", 12D, 0L), Config.db)
@@ -49,7 +49,7 @@ class IncomingChainTxProcessorSpec extends AnyFunSuite {
   // This test requires a running testnet bitcoind
 
   test("On-chain deposits are processed correctly") {
-    TestUtils.resetEntireDatabase()
+    ChainSwapTestUtils.resetEntireDatabase()
     implicit val system: ActorSystem = ActorSystem("test-actor-system")
     val eventListener = TestProbe()
     val zmqActor = system actorOf Props(classOf[ZMQActor], Config.vals.bitcoinAPI, Config.vals.btcZMQApi, Config.vals.rewindBlocks)
