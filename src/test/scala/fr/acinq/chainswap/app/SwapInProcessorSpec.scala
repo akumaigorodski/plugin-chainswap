@@ -18,10 +18,6 @@ import org.scalatest.funsuite.AnyFunSuite
 import scala.concurrent.Await
 
 class SwapInProcessorSpec extends AnyFunSuite {
-  test("Database integrity") {
-    TestUtils.resetEntireDatabase()
-  }
-
   test("Create new address, reuse it") {
     TestUtils.resetEntireDatabase()
     implicit val system: ActorSystem = ActorSystem("test-actor-system")

@@ -9,7 +9,6 @@ import scala.util.{Failure, Success, Try}
 import fr.acinq.bitcoin.{Btc, ByteVector32, Crypto, Satoshi}
 import fr.acinq.eclair.payment.{PaymentReceived, PaymentRequest}
 
-import akka.util.Timeout
 import grizzled.slf4j.Logging
 import com.google.common.cache.Cache
 import fr.acinq.eclair.db.PaymentType
@@ -18,24 +17,21 @@ import fr.acinq.eclair.blockchain.bitcoind.BitcoinCoreWallet
 import fr.acinq.eclair.payment.receive.MultiPartHandler.ReceivePayment
 
 
-class SwapOutProcessor(vals: Vals, kit: Kit) extends Actor with Logging {
-  context.system.eventStream.subscribe(channel = classOf[PaymentReceived], subscriber = self)
+class SwapOutProcessor(vals: Vals, kit: Kit, getPreimage: String => ByteVector32) extends Actor with Logging {
   context.system.scheduler.scheduleWithFixedDelay(0.seconds, 60.minutes, self, UpdateChainFeerates)
+  context.system.eventStream.subscribe(channel = classOf[PaymentReceived], subscriber = self)
+  var currentFeerates: List[BlockTargetAndFee] = Nil
+  val blockTargets = List(36, 144, 1008)
 
   val pendingRequests: Cache[ByteVector32, SwapOutRequestAndFee] = {
     val expiry = kit.nodeParams.paymentRequestExpiry.toMinutes.toInt + 1 // One extra minute in case of timer disparity with invoice remover
     Tools.makeExpireAfterAccessCache(expiry).maximumSize(5000000).build[ByteVector32, SwapOutRequestAndFee]
   }
 
-  val blockTargets = List(36, 144, 1008)
-  val wallet: BitcoinCoreWallet = kit.wallet.asInstanceOf[BitcoinCoreWallet]
-  implicit val timeout: Timeout = Timeout(30.seconds)
-  var currentFeerates: List[BlockTargetAndFee] = Nil
-
   override def receive: Receive = {
     case ChainFeeratesFrom(userId) =>
       val swapOutFeerates = SwapOutFeerates(currentFeerates)
-      sender ! ChainFeeratesTo(swapOutFeerates, userId)
+      context.parent ! ChainFeeratesTo(swapOutFeerates, userId)
 
     case SwapOutRequestFrom(request, userId) =>
       val chainFee = selectedBlockTarget(request).fee
@@ -51,18 +47,18 @@ class SwapOutProcessor(vals: Vals, kit: Kit) extends Actor with Logging {
         logger.info(s"PLGN ChainSwap, SwapOutRequestFrom, fail=too small amount, asked=${request.amount}, userId=$userId")
         context.parent ! SwapOutDeniedTo(request.btcAddress, s"Payment amount should be larger than ${vals.chainMinWithdrawSat}sat", userId)
       } else {
-        val knownPreimage: ByteVector32 = randomBytes32
-        val paymentHash: ByteVector32 = Crypto.sha256(knownPreimage)
+        val preimage = getPreimage(userId)
+        val paymentHash = Crypto.sha256(preimage)
         val requestWithFixedFee = SwapOutRequestAndFee(request, userId, chainFee)
         val description = s"Payment to address ${request.btcAddress} with amount: ${request.amount.toLong}sat and fee: ${chainFee.toLong}sat"
         logger.info(s"PLGN ChainSwap, SwapOutRequestFrom, success address=${request.btcAddress}, amountSat=${request.amount.toLong}, feeSat=${chainFee.toLong}, paymentHash=${paymentHash.toHex}, userId=$userId")
-        kit.paymentHandler ! ReceivePayment(Some(totalAmount.toMilliSatoshi), description, Some(kit.nodeParams.paymentRequestExpiry.toSeconds), paymentPreimage = Some(knownPreimage), paymentType = PaymentType.SwapOut)
+        kit.paymentHandler ! ReceivePayment(Some(totalAmount.toMilliSatoshi), description, Some(kit.nodeParams.paymentRequestExpiry.toSeconds), paymentPreimage = Some(preimage), paymentType = PaymentType.SwapOut)
         pendingRequests.put(paymentHash, requestWithFixedFee)
       }
 
     case message: PaymentRequest =>
-      Option(pendingRequests getIfPresent message.paymentHash) foreach { case SwapOutRequestAndFee(request, userId, chainFee) =>
-        context.parent ! SwapOutResponseTo(SwapOutResponse(request.amount, chainFee, PaymentRequest write message), userId)
+      Option(pendingRequests getIfPresent message.paymentHash) foreach { case SwapOutRequestAndFee(request, userId, agreedUponFee) =>
+        context.parent ! SwapOutResponseTo(SwapOutResponse(request.amount, agreedUponFee, PaymentRequest write message), userId)
       }
 
     case message: Status.Failure =>
@@ -70,12 +66,22 @@ class SwapOutProcessor(vals: Vals, kit: Kit) extends Actor with Logging {
       logger.info(s"PLGN ChainSwap, SwapOutRequestFrom, fail=${message.cause.getMessage}")
 
     case message: PaymentReceived =>
-      // Always check for received amount because this may be a partial payment
-      Option(pendingRequests getIfPresent message.paymentHash).filter(message.amount >= _.totalAmount) foreach { swapOutWrapper =>
-        wallet.sendToAddress(swapOutWrapper.request.btcAddress, swapOutWrapper.request.amount, swapOutWrapper.request.blockTarget) onComplete {
-          case Success(txid) => logger.info(s"PLGN ChainSwap, sendToAddress, success txid=${txid.toHex}, paymentHash=${message.paymentHash.toHex}, userId=${swapOutWrapper.userId}")
-          case Failure(err) => logger.info(s"PLGN ChainSwap, sendToAddress, fail reason=${err.getMessage}, paymentHash=${message.paymentHash.toHex}, userId=${swapOutWrapper.userId}")
-        }
+      val askedWrapOpt = Option(pendingRequests getIfPresent message.paymentHash)
+      val enoughWrapOpt = askedWrapOpt.filter(askedFor => message.amount >= askedFor.totalAmount)
+
+      (enoughWrapOpt, kit.wallet) match {
+        case (Some(wrap), wallet: BitcoinCoreWallet) =>
+          wallet.sendToAddress(wrap.request.btcAddress, wrap.request.amount, wrap.request.blockTarget) onComplete {
+            case Success(txid) => logger.info(s"PLGN ChainSwap, sendToAddress, success txid=${txid.toHex}, paymentHash=${message.paymentHash.toHex}, userId=${wrap.userId}")
+            case Failure(err) => logger.info(s"PLGN ChainSwap, sendToAddress, fail reason=${err.getMessage}, paymentHash=${message.paymentHash.toHex}, userId=${wrap.userId}")
+          }
+
+        case (Some(wrap), wallet) =>
+          context.parent ! SwapOutDeniedTo(wrap.request.btcAddress, s"Transaction send failure, please contact support", wrap.userId)
+          logger.info(s"PLGN ChainSwap, sendToAddress, fail reason=wrong wallet, type=${wallet.getClass.getName}")
+
+        case _ =>
+          // Do nothing
       }
 
     case UpdateChainFeerates =>

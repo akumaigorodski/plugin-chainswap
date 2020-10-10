@@ -1,6 +1,7 @@
 package fr.acinq.chainswap.app
 
 import scala.concurrent.duration._
+import scala.util.{Failure, Success, Try}
 import akka.actor.{Actor, ActorRef, OneForOneStrategy, Props}
 import fr.acinq.eclair.io.{PeerConnected, PeerDisconnected, UnknownMessageReceived}
 import fr.acinq.chainswap.app.processor.{IncomingChainTxProcessor, SwapInProcessor, SwapOutProcessor, ZMQActor}
@@ -8,12 +9,9 @@ import fr.acinq.eclair.channel.Channel.OutgoingMessage
 import akka.actor.SupervisorStrategy.Resume
 import fr.acinq.chainswap.app.wire.Codecs
 import slick.jdbc.PostgresProfile
-
 import scala.collection.mutable
 import grizzled.slf4j.Logging
-import fr.acinq.eclair.Kit
-
-import scala.util.{Failure, Success, Try}
+import fr.acinq.eclair._
 
 
 class Worker(db: PostgresProfile.backend.Database, vals: Vals, kit: Kit) extends Actor with Logging {
@@ -22,9 +20,9 @@ class Worker(db: PostgresProfile.backend.Database, vals: Vals, kit: Kit) extends
   context.system.eventStream.subscribe(channel = classOf[PeerConnected], subscriber = self)
   val userId2Connection = mutable.Map.empty[String, PeerAndConnection]
 
-  val swapOutProcessor: ActorRef = context actorOf Props(classOf[SwapOutProcessor], vals, kit)
   val swapInProcessor: ActorRef = context actorOf Props(classOf[SwapInProcessor], vals, kit, db)
   val zmqActor: ActorRef = context actorOf Props(classOf[ZMQActor], vals.bitcoinAPI, vals.btcZMQApi, vals.rewindBlocks)
+  val swapOutProcessor: ActorRef = context actorOf Props(classOf[SwapOutProcessor], vals, kit, (userId: String) => randomBytes32)
   val incomingChainTxProcessor: ActorRef = context actorOf Props(classOf[IncomingChainTxProcessor], vals, swapInProcessor, zmqActor, db)
 
   override def receive: Receive = {

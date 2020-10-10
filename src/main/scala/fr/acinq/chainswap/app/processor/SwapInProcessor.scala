@@ -122,7 +122,6 @@ class SwapInProcessor(vals: Vals, kit: Kit, db: PostgresProfile.backend.Database
             self ! AccountStatusFrom(userId)
           } catch {
             case error: Throwable =>
-              error.printStackTrace()
               logger.info(s"PLGN ChainSwap, WithdrawBTCLN, fail=${error.getMessage}, account=$userId")
               context.parent ! SwapInWithdrawRequestDeniedTo(request.paymentRequest, "Please try again later", userId)
           }
