@@ -15,10 +15,10 @@ import scala.concurrent.Await
 object ChainSwapTestUtils {
   def resetEntireDatabase(): Unit = {
     val setup = DBIO.seq(
-      fr.acinq.chainswap.app.dbo.Users.model.schema.dropIfExists,
+      fr.acinq.chainswap.app.dbo.Accounts.model.schema.dropIfExists,
       fr.acinq.chainswap.app.dbo.BTCDeposits.model.schema.dropIfExists,
       fr.acinq.chainswap.app.dbo.Account2LNWithdrawals.model.schema.dropIfExists,
-      fr.acinq.chainswap.app.dbo.Users.model.schema.create,
+      fr.acinq.chainswap.app.dbo.Accounts.model.schema.create,
       fr.acinq.chainswap.app.dbo.BTCDeposits.model.schema.create,
       fr.acinq.chainswap.app.dbo.Account2LNWithdrawals.model.schema.create
     )

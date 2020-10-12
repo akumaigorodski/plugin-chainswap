@@ -18,30 +18,30 @@ class Worker(db: PostgresProfile.backend.Database, vals: Vals, kit: Kit) extends
   context.system.eventStream.subscribe(channel = classOf[UnknownMessageReceived], subscriber = self)
   context.system.eventStream.subscribe(channel = classOf[PeerDisconnected], subscriber = self)
   context.system.eventStream.subscribe(channel = classOf[PeerConnected], subscriber = self)
-  val userId2Connection = mutable.Map.empty[String, PeerAndConnection]
+  val account2Connection = mutable.Map.empty[String, PeerAndConnection]
 
   val swapInProcessor: ActorRef = context actorOf Props(classOf[SwapInProcessor], vals, kit, db)
   val zmqActor: ActorRef = context actorOf Props(classOf[ZMQActor], vals.bitcoinAPI, vals.btcZMQApi, vals.rewindBlocks)
-  val swapOutProcessor: ActorRef = context actorOf Props(classOf[SwapOutProcessor], vals, kit, (userId: String) => randomBytes32)
+  val swapOutProcessor: ActorRef = context actorOf Props(classOf[SwapOutProcessor], vals, kit, (accountId: String) => randomBytes32)
   val incomingChainTxProcessor: ActorRef = context actorOf Props(classOf[IncomingChainTxProcessor], vals, swapInProcessor, zmqActor, db)
 
   override def receive: Receive = {
     case peerMessage: PeerDisconnected =>
-      userId2Connection.remove(peerMessage.nodeId.toString)
+      account2Connection.remove(peerMessage.nodeId.toString)
 
     case PeerConnected(peer, remoteNodeId, info) if info.remoteInit.features.hasPluginFeature(ChainSwapFeature.plugin) =>
-      userId2Connection(remoteNodeId.toString) = PeerAndConnection(peer, info.peerConnection)
+      account2Connection(remoteNodeId.toString) = PeerAndConnection(peer, info.peerConnection)
       swapOutProcessor ! ChainFeeratesFrom(remoteNodeId.toString)
       swapInProcessor ! AccountStatusFrom(remoteNodeId.toString)
 
-    case ChainFeeratesTo(swapOutFeerates, userId) =>
-      userId2Connection.get(userId) foreach { case PeerAndConnection(peer, connection) =>
+    case ChainFeeratesTo(swapOutFeerates, accountId) =>
+      account2Connection.get(accountId) foreach { case PeerAndConnection(peer, connection) =>
         peer ! OutgoingMessage(Codecs toUnknownMessage swapOutFeerates, connection)
       }
 
-    case AccountStatusTo(swapInState, userId) =>
+    case AccountStatusTo(swapInState, accountId) =>
       // May not be sent back by `swapInProcessor` if account is empty and nothing is happening
-      userId2Connection.get(userId) foreach { case PeerAndConnection(peer, connection) =>
+      account2Connection.get(accountId) foreach { case PeerAndConnection(peer, connection) =>
         peer ! OutgoingMessage(Codecs toUnknownMessage swapInState, connection)
       }
 
@@ -54,28 +54,28 @@ class Worker(db: PostgresProfile.backend.Database, vals: Vals, kit: Kit) extends
         case _ => // Do nothing
       }
 
-    case SwapInResponseTo(swapInResponse, userId) =>
+    case SwapInResponseTo(swapInResponse, accountId) =>
       // Always works, each account is guaranteed to have at least one chain address
-      userId2Connection.get(userId) foreach { case PeerAndConnection(peer, connection) =>
-        incomingChainTxProcessor ! UserIdAndAddress(userId, swapInResponse.btcAddress)
+      account2Connection.get(accountId) foreach { case PeerAndConnection(peer, connection) =>
+        incomingChainTxProcessor ! AccountAndAddress(accountId, swapInResponse.btcAddress)
         peer ! OutgoingMessage(Codecs toUnknownMessage swapInResponse, connection)
       }
 
-    case SwapInWithdrawRequestDeniedTo(paymentRequest, reason, userId) =>
+    case SwapInWithdrawRequestDeniedTo(paymentRequest, reason, accountId) =>
       // Either deny right away or silently attempt to fulfill a payment request
-      userId2Connection.get(userId) foreach { case PeerAndConnection(peer, connection) =>
+      account2Connection.get(accountId) foreach { case PeerAndConnection(peer, connection) =>
         peer ! OutgoingMessage(Codecs toUnknownMessage SwapInWithdrawDenied(paymentRequest, reason), connection)
       }
 
-    case SwapOutResponseTo(swapOutResponse, userId) =>
+    case SwapOutResponseTo(swapOutResponse, accountId) =>
       // May not be sent back if `paymentInitiator` fails somehow, client should timeout
-      userId2Connection.get(userId) foreach { case PeerAndConnection(peer, connection) =>
+      account2Connection.get(accountId) foreach { case PeerAndConnection(peer, connection) =>
         peer ! OutgoingMessage(Codecs toUnknownMessage swapOutResponse, connection)
       }
 
-    case SwapOutDeniedTo(btcAddress, reason, userId) =>
+    case SwapOutDeniedTo(btcAddress, reason, accountId) =>
       // Either deny right away or silently send a chain transaction on LN payment
-      userId2Connection.get(userId) foreach { case PeerAndConnection(peer, connection) =>
+      account2Connection.get(accountId) foreach { case PeerAndConnection(peer, connection) =>
         peer ! OutgoingMessage(Codecs toUnknownMessage SwapOutDenied(btcAddress, reason), connection)
       }
   }

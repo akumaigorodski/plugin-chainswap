@@ -23,15 +23,15 @@ object Blocking {
   def txWrite[T](act: DBIOAction[T, NoStream, Effect.Write], db: Database): T = Await.result(db.run(act.transactionally), span)
 
   def createTablesIfNotExist(db: Database): Unit = {
-    val tables = Seq(Users.model, BTCDeposits.model, Account2LNWithdrawals.model).map(_.schema.createIfNotExists)
+    val tables = Seq(Accounts.model, BTCDeposits.model, Account2LNWithdrawals.model).map(_.schema.createIfNotExists)
     Await.result(db.run(DBIO.sequence(tables).transactionally), span)
   }
 }
 
 
-object Users {
-  final val tableName = "users"
-  val model = TableQuery[Users]
+object Accounts {
+  final val tableName = "accounts"
+  val model = TableQuery[Accounts]
   type DbType = (Long, String, String)
   private val insert = for (x <- model) yield (x.btcAddress, x.accountId)
   private def findByBtcAddress(btcAddress: RepString) = model.filter(_.btcAddress === btcAddress).map(_.accountId)
@@ -42,12 +42,12 @@ object Users {
   val insertCompiled = Compiled(insert)
 }
 
-class Users(tag: Tag) extends Table[Users.DbType](tag, Users.tableName) {
+class Accounts(tag: Tag) extends Table[Accounts.DbType](tag, Accounts.tableName) {
   def id: Rep[Long] = column[Long]("id", O.PrimaryKey, O.AutoInc)
   def btcAddress: Rep[String] = column[String]("btc_address", O.Unique)
   def accountId: Rep[String] = column[String]("account_id")
 
-  def accountIdIdx: Index = index(s"users__account_id__idx", accountId, unique = false)
+  def accountIdIdx: Index = index(s"${tableName}__account_id__idx", accountId, unique = false)
   def * = (id, btcAddress, accountId)
 }
 
@@ -60,13 +60,13 @@ object BTCDeposits {
   private def findAllWaiting(threshold: RepLong, limit: RepLong) = model.filter(x => x.depth < threshold && x.stamp > limit)
   private def findAllDepthUpdatable(id: RepLong) = model.filter(_.id === id).map(_.depth)
 
-  private def findForUser(accountId: RepString) = Users.model.filter(_.accountId === accountId).join(BTCDeposits.model).on(_.btcAddress === _.btcAddress).map(_._2)
-  private def findWaitingForUser(accountId: RepString, threshold: RepLong, limit: RepLong) = findForUser(accountId).filter(deposit => deposit.depth < threshold && deposit.stamp > limit)
-  private def findSumCompleteForUser(accountId: RepString, threshold: RepLong) = findForUser(accountId).filter(_.depth >= threshold).map(_.sat).sum
+  private def findFor(accountId: RepString) = Accounts.model.filter(_.accountId === accountId).join(BTCDeposits.model).on(_.btcAddress === _.btcAddress).map(_._2)
+  private def findWaitingForAccount(accountId: RepString, threshold: RepLong, limit: RepLong) = findFor(accountId).filter(deposit => deposit.depth < threshold && deposit.stamp > limit)
+  private def findSumCompleteForAccount(accountId: RepString, threshold: RepLong) = findFor(accountId).filter(_.depth >= threshold).map(_.sat).sum
 
   def clearUp = sqlu"""
      DELETE FROM #${BTCDeposits.tableName} B WHERE NOT EXISTS
-     (SELECT * FROM #${Users.tableName} U WHERE B.btc_address = U.btc_address)
+     (SELECT * FROM #${Accounts.tableName} U WHERE B.btc_address = U.btc_address)
   """
 
   // Insert which silently ignores duplicate records
@@ -76,9 +76,9 @@ object BTCDeposits {
     ON CONFLICT DO NOTHING
   """
 
-  val findSumCompleteForUserCompiled = Compiled(findSumCompleteForUser _)
+  val findSumCompleteForAccountCompiled = Compiled(findSumCompleteForAccount _)
   val findAllDepthUpdatableCompiled = Compiled(findAllDepthUpdatable _)
-  val findWaitingForUserCompiled = Compiled(findWaitingForUser _)
+  val findWaitingForAccountCompiled = Compiled(findWaitingForAccount _)
   val findAllWaitingCompiled = Compiled(findAllWaiting _)
 }
 

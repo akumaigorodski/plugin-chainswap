@@ -9,7 +9,7 @@ import fr.acinq.eclair._
 import fr.acinq.bitcoin.{ByteVector32, Transaction}
 import fr.acinq.chainswap.app.dbo.Blocking.askTimeout
 import slick.jdbc.PostgresProfile.api._
-import fr.acinq.chainswap.app.dbo.{Blocking, Users}
+import fr.acinq.chainswap.app.dbo.{Blocking, Accounts}
 import fr.acinq.chainswap.app.processor.{IncomingChainTxProcessor, SwapInProcessor, ZMQActor, ZMQListener}
 import fr.acinq.eclair.payment.PaymentSent.PartialPayment
 import fr.acinq.eclair.payment.{PaymentFailed, PaymentSent}
@@ -52,9 +52,9 @@ class SwapInProcessorSpec extends AnyFunSuite {
       "4f062977f425b6ce70a7b08869864c83664fcf60888ac0000000000000000226a2005990528fb62094aed94fa546d1990e8b2b3fb6613fea8aa779819132c5aa82900000000"
 
     val rawAddress1 = "n3RzaNTD8LnBGkREBjSkouy5gmd2dVf7jQ" // 3560000 sat
-    Blocking.txWrite(Users.insertCompiled += (rawAddress1, userId), Config.db) // inject a known address for given user
+    Blocking.txWrite(Accounts.insertCompiled += (rawAddress1, userId), Config.db) // inject a known address for given user
     val listener = Await.result(incomingChainTxProcessor ? Symbol("processor"), Blocking.span).asInstanceOf[ZMQListener]
-    incomingChainTxProcessor ! UserIdAndAddress(userId, rawAddress1) // User asks for address, make incomingChainTxProcessor expect a mempool tx
+    incomingChainTxProcessor ! AccountAndAddress(userId, rawAddress1) // User asks for address, make incomingChainTxProcessor expect a mempool tx
     synchronized(wait(100))
 
     listener.onNewTx(Transaction.read(rawTx1)) // get an incoming tx

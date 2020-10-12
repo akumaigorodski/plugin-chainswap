@@ -7,7 +7,7 @@ import scala.util.{Failure, Success, Try}
 import fr.acinq.eclair.{Kit, MilliSatoshi}
 import com.google.common.cache.{CacheLoader, LoadingCache}
 import fr.acinq.eclair.payment.{PaymentFailed, PaymentRequest, PaymentSent}
-import fr.acinq.chainswap.app.dbo.{Account2LNWithdrawals, BTCDeposits, Blocking, Users}
+import fr.acinq.chainswap.app.dbo.{Account2LNWithdrawals, BTCDeposits, Blocking, Accounts}
 import fr.acinq.eclair.payment.send.PaymentInitiator.SendPaymentRequest
 import fr.acinq.chainswap.app.dbo.Blocking.askTimeout
 import fr.acinq.eclair.router.RouteCalculation
@@ -31,7 +31,7 @@ class SwapInProcessor(vals: Vals, kit: Kit, db: PostgresProfile.backend.Database
   val completeDepositSumLoader: CacheLoader[String, Satoshi] =
     new CacheLoader[String, Satoshi] {
       def load(accountId: String): Satoshi = {
-        val query = BTCDeposits.findSumCompleteForUserCompiled(accountId, vals.depthThreshold)
+        val query = BTCDeposits.findSumCompleteForAccountCompiled(accountId, vals.depthThreshold)
         Blocking.txRead(query.result, db).map(Satoshi) getOrElse Satoshi(0L)
       }
     }
@@ -40,7 +40,7 @@ class SwapInProcessor(vals: Vals, kit: Kit, db: PostgresProfile.backend.Database
     new CacheLoader[String, PendingDepositsList] {
       def load(accountId: String): PendingDepositsList = {
         val lookBackPeriod = System.currentTimeMillis - vals.lookBackPeriodMsecs
-        val query = BTCDeposits.findWaitingForUserCompiled(accountId, vals.depthThreshold, lookBackPeriod)
+        val query = BTCDeposits.findWaitingForAccountCompiled(accountId, vals.depthThreshold, lookBackPeriod)
         Blocking.txRead(query.result, db).map(tuple => BTCDeposit.tupled(tuple).toPendingDeposit).toList
       }
     }
@@ -67,95 +67,95 @@ class SwapInProcessor(vals: Vals, kit: Kit, db: PostgresProfile.backend.Database
   val pendingWithdrawals: LoadingCache[String, PendingWithdrawalsSeq] = Tools.makeExpireAfterAccessCache(1440 * 30).maximumSize(5000000).build(pendingWithdrawalsLoader)
 
   override def receive: Receive = {
-    case AccountStatusFrom(userId) =>
-      val swapInState = getSwapInState(userId)
-      val shouldReply = isImportant(swapInState)
+    case AccountStatusFrom(accountId) =>
+      val swapInState = getSwapInState(accountId)
+      val shouldReply: Boolean = isImportant(swapInState)
       // Do not initiate a wire message if nothing of interest is happening
-      if (shouldReply) context.parent ! AccountStatusTo(swapInState, userId)
+      if (shouldReply) context.parent ! AccountStatusTo(swapInState, accountId)
 
-    case request @ SwapInRequestFrom(userId) =>
-      val query = Users.findByAccountIdCompiled(userId)
+    case request @ SwapInRequestFrom(accountId) =>
+      val query = Accounts.findByAccountIdCompiled(accountId)
       val addressOpt = Blocking.txRead(query.result, db)
 
       addressOpt match {
         case btcAddress +: _ =>
           val response = SwapInResponse(btcAddress)
-          context.parent ! SwapInResponseTo(response, userId)
+          context.parent ! SwapInResponseTo(response, accountId)
 
         case _ =>
-          val tuple = (vals.bitcoinAPI.getNewAddress, userId)
-          Blocking.txWrite(Users.insertCompiled += tuple, db)
+          val tuple = (vals.bitcoinAPI.getNewAddress, accountId)
+          Blocking.txWrite(Accounts.insertCompiled += tuple, db)
           self ! request
       }
 
     case message: ChainDepositReceived =>
-      pendingDeposits.invalidate(message.userId)
+      pendingDeposits.invalidate(message.accountId)
       val isComplete = message.depth >= vals.depthThreshold
-      if (isComplete) completeDepositSum.invalidate(message.userId)
-      self ! AccountStatusFrom(message.userId)
+      if (isComplete) completeDepositSum.invalidate(message.accountId)
+      self ! AccountStatusFrom(message.accountId)
 
-    case SwapInWithdrawRequestFrom(request, userId) =>
+    case SwapInWithdrawRequestFrom(request, accountId) =>
       Try(PaymentRequest read request.paymentRequest) match {
         case Success(paymentRequest) if paymentRequest.amount.isEmpty =>
-          logger.info(s"PLGN ChainSwap, WithdrawBTCLN, fail=amount-less invoice, account=$userId")
-          context.parent ! SwapInWithdrawRequestDeniedTo(request.paymentRequest, "Invoice should have an amount", userId)
+          logger.info(s"PLGN ChainSwap, WithdrawBTCLN, fail=amount-less invoice, account=$accountId")
+          context.parent ! SwapInWithdrawRequestDeniedTo(request.paymentRequest, "Invoice should have an amount", accountId)
 
         case Success(paymentRequest) if paymentRequest.amount.get < MilliSatoshi(vals.lnMinWithdrawMsat) =>
-          logger.info(s"PLGN ChainSwap, WithdrawBTCLN, fail=invoice amount below min ${vals.lnMinWithdrawMsat} msat, account=$userId")
-          context.parent ! SwapInWithdrawRequestDeniedTo(request.paymentRequest, s"Invoice should have an amount larger than ${vals.lnMinWithdrawMsat} msat", userId)
+          logger.info(s"PLGN ChainSwap, WithdrawBTCLN, fail=invoice amount below min ${vals.lnMinWithdrawMsat} msat, account=$accountId")
+          context.parent ! SwapInWithdrawRequestDeniedTo(request.paymentRequest, s"Invoice should have an amount larger than ${vals.lnMinWithdrawMsat} msat", accountId)
 
         case Success(pr) =>
           val finalAmount = pr.amount.get
-          val swapInState = getSwapInState(userId)
+          val swapInState = getSwapInState(accountId)
 
           if (finalAmount > swapInState.maxWithdrawable) {
-            logger.info(s"PLGN ChainSwap, WithdrawBTCLN, fail=invoice amount above max withdrawable ${swapInState.maxWithdrawable.truncateToSatoshi.toLong} sat, account=$userId")
-            context.parent ! SwapInWithdrawRequestDeniedTo(request.paymentRequest, s"Invoice amount should not exceed max withdrawable ${swapInState.maxWithdrawable.truncateToSatoshi.toLong} sat", userId)
+            logger.info(s"PLGN ChainSwap, WithdrawBTCLN, fail=invoice amount above max withdrawable ${swapInState.maxWithdrawable.truncateToSatoshi.toLong} sat, account=$accountId")
+            context.parent ! SwapInWithdrawRequestDeniedTo(request.paymentRequest, s"Invoice amount should not exceed max withdrawable ${swapInState.maxWithdrawable.truncateToSatoshi.toLong} sat", accountId)
           } else try {
             val feeReserve = finalAmount * vals.lnMaxFeePct
             val routeParams = RouteCalculation.getDefaultRouteParams(kit.nodeParams.routerConf).copy(maxFeePct = vals.lnMaxFeePct)
-            logger.info(s"PLGN ChainSwap, WithdrawBTCLN, validation success, trying to send LN with payment hash=${pr.paymentHash}, amount=${finalAmount.toLong} msat, account=$userId")
+            logger.info(s"PLGN ChainSwap, WithdrawBTCLN, validation success, trying to send LN with payment hash=${pr.paymentHash}, amount=${finalAmount.toLong} msat, account=$accountId")
             val spr = SendPaymentRequest(finalAmount, pr.paymentHash, pr.nodeId, kit.nodeParams.maxPaymentAttempts, paymentRequest = Some(pr), routeParams = Some(routeParams), assistedRoutes = pr.routingInfo)
-            val tuple = (userId, Await.result(kit.paymentInitiator ? spr, Blocking.span).asInstanceOf[UUID].toString, feeReserve.toLong, finalAmount.toLong, System.currentTimeMillis, Account2LNWithdrawals.PENDING)
+            val tuple = (accountId, Await.result(kit.paymentInitiator ? spr, Blocking.span).asInstanceOf[UUID].toString, feeReserve.toLong, finalAmount.toLong, System.currentTimeMillis, Account2LNWithdrawals.PENDING)
             Blocking.txWrite(Account2LNWithdrawals.insertCompiled += tuple, db)
-            pendingWithdrawals.invalidate(userId)
-            self ! AccountStatusFrom(userId)
+            pendingWithdrawals.invalidate(accountId)
+            self ! AccountStatusFrom(accountId)
           } catch {
             case error: Throwable =>
-              logger.info(s"PLGN ChainSwap, WithdrawBTCLN, fail=${error.getMessage}, account=$userId")
-              context.parent ! SwapInWithdrawRequestDeniedTo(request.paymentRequest, "Please try again later", userId)
+              logger.info(s"PLGN ChainSwap, WithdrawBTCLN, fail=${error.getMessage}, account=$accountId")
+              context.parent ! SwapInWithdrawRequestDeniedTo(request.paymentRequest, "Please try again later", accountId)
           }
 
         case Failure(error) =>
-          logger.info(s"PLGN ChainSwap, WithdrawBTCLN, fail=${error.getMessage}, account=$userId")
-          context.parent ! SwapInWithdrawRequestDeniedTo(request.paymentRequest, "Please try again later", userId)
+          logger.info(s"PLGN ChainSwap, WithdrawBTCLN, fail=${error.getMessage}, account=$accountId")
+          context.parent ! SwapInWithdrawRequestDeniedTo(request.paymentRequest, "Please try again later", accountId)
       }
 
     case message: PaymentFailed =>
-      Blocking.txRead(Account2LNWithdrawals.findAccountByIdCompiled(message.id.toString).result, db) foreach { userId =>
+      Blocking.txRead(Account2LNWithdrawals.findAccountByIdCompiled(message.id.toString).result, db) foreach { accountId =>
         val query = Account2LNWithdrawals.findStatusFeeByIdUpdatableCompiled(message.id.toString)
         val updateTuple = Tuple2(Account2LNWithdrawals.FAILED, 0L)
         Blocking.txWrite(query.update(updateTuple), db)
-        pendingWithdrawals.invalidate(userId)
-        self ! AccountStatusFrom(userId)
+        pendingWithdrawals.invalidate(accountId)
+        self ! AccountStatusFrom(accountId)
       }
 
     case message: PaymentSent =>
-      Blocking.txRead(Account2LNWithdrawals.findAccountByIdCompiled(message.id.toString).result, db) foreach { userId =>
+      Blocking.txRead(Account2LNWithdrawals.findAccountByIdCompiled(message.id.toString).result, db) foreach { accountId =>
         val query = Account2LNWithdrawals.findStatusFeeByIdUpdatableCompiled(message.id.toString)
         val updateTuple = Tuple2(Account2LNWithdrawals.SUCCEEDED, message.feesPaid.toLong)
         Blocking.txWrite(query.update(updateTuple), db)
-        successfulWithdrawalSum.invalidate(userId)
-        pendingWithdrawals.invalidate(userId)
-        self ! AccountStatusFrom(userId)
+        successfulWithdrawalSum.invalidate(accountId)
+        pendingWithdrawals.invalidate(accountId)
+        self ! AccountStatusFrom(accountId)
       }
   }
 
-  def getSwapInState(userId: String): SwapInState = {
-    val completeDepositSum1 = completeDepositSum.get(userId)
-    val successfulWithdrawalSum1 = successfulWithdrawalSum.get(userId)
-    val (inFlightPayments, inFlightReserves) = pendingWithdrawals.get(userId).unzip
-    val pendingDeposits1 = pendingDeposits.get(userId)
+  def getSwapInState(accountId: String): SwapInState = {
+    val completeDepositSum1 = completeDepositSum.get(accountId)
+    val successfulWithdrawalSum1 = successfulWithdrawalSum.get(accountId)
+    val (inFlightPayments, inFlightReserves) = pendingWithdrawals.get(accountId).unzip
+    val pendingDeposits1 = pendingDeposits.get(accountId)
 
     val totalActiveReserve = MilliSatoshi(inFlightReserves.sum)
     val totalInFlightAmount = MilliSatoshi(inFlightPayments.sum)

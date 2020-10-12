@@ -5,8 +5,8 @@ import slick.jdbc.PostgresProfile.api._
 import scala.jdk.CollectionConverters._
 import scala.collection.parallel.CollectionConverters._
 
-import fr.acinq.chainswap.app.{BTCDeposit, ChainDepositReceived, Tools, UserIdAndAddress, Vals}
-import fr.acinq.chainswap.app.dbo.{BTCDeposits, Blocking, Users}
+import fr.acinq.chainswap.app.{BTCDeposit, ChainDepositReceived, Tools, AccountAndAddress, Vals}
+import fr.acinq.chainswap.app.dbo.{BTCDeposits, Blocking, Accounts}
 import akka.actor.{Actor, ActorRef}
 
 import wf.bitcoin.javabitcoindrpcclient.BitcoindRpcClient.Block
@@ -20,7 +20,7 @@ import scala.util.Try
 
 class IncomingChainTxProcessor(vals: Vals, swapInProcessor: ActorRef, zmq: ActorRef, db: PostgresProfile.backend.Database) extends Actor with Logging { me =>
   val processedBlocks: Cache[java.lang.Integer, java.lang.Long] = Tools.makeExpireAfterAccessCache(1440 * 60).maximumSize(1000000).build[java.lang.Integer, java.lang.Long]
-  val recentRequests: Cache[ByteVector, UserIdAndAddress] = Tools.makeExpireAfterAccessCache(1440).maximumSize(5000000).build[ByteVector, UserIdAndAddress]
+  val recentRequests: Cache[ByteVector, AccountAndAddress] = Tools.makeExpireAfterAccessCache(1440).maximumSize(5000000).build[ByteVector, AccountAndAddress]
 
   val onAnyDatabaseError: DuplicateInsertMatcher[Unit] = new DuplicateInsertMatcher[Unit] {
     def onOtherError(error: Throwable): Unit = logger.info(s"PLGN ChainSwap, DB, error=$error")
@@ -30,12 +30,12 @@ class IncomingChainTxProcessor(vals: Vals, swapInProcessor: ActorRef, zmq: Actor
   val processor: ZMQListener = new ZMQListener {
     override def onNewTx(tx: Transaction): Unit = for {
       Tuple2(TxOut(amount, pubKeyScript), outIdx) <- tx.txOut.zipWithIndex
-      UserIdAndAddress(userId, btcAddress) <- Option(recentRequests getIfPresent pubKeyScript)
+      AccountAndAddress(accountId, btcAddress) <- Option(recentRequests getIfPresent pubKeyScript)
       if amount.toLong >= vals.minChainDepositSat
 
       txid = tx.txid.toHex
       _ = Blocking.txWrite(BTCDeposits.insert(btcAddress, outIdx.toLong, txid, amount.toLong, 0L), db)
-    } swapInProcessor ! ChainDepositReceived(userId, amount, txid, depth = 0L)
+    } swapInProcessor ! ChainDepositReceived(accountId, amount, txid, depth = 0L)
 
     override def onNewBlock(block: Block): Unit =
       if (Option(processedBlocks getIfPresent block.height).isEmpty)
@@ -71,9 +71,9 @@ class IncomingChainTxProcessor(vals: Vals, swapInProcessor: ActorRef, zmq: Actor
         btcDeposit <- Blocking.txRead(query.result, db).map(BTCDeposit.tupled).par
         // Relies on deposit still pending in our db, but having enough confs in bitcoind
         depth <- getConfs(btcDeposit.txid, btcDeposit.outIndex) if depth >= vals.depthThreshold
-        userId <- Blocking.txRead(Users.findByBtcAddressCompiled(btcDeposit.btcAddress).result, db)
         _ = Blocking.txWrite(BTCDeposits.findAllDepthUpdatableCompiled(btcDeposit.id).update(depth), db)
-      } swapInProcessor ! ChainDepositReceived(userId, Satoshi(btcDeposit.amount), btcDeposit.txid, depth)
+        accountId <- Blocking.txRead(Accounts.findByBtcAddressCompiled(btcDeposit.btcAddress).result, db)
+      } swapInProcessor ! ChainDepositReceived(accountId, Satoshi(btcDeposit.amount), btcDeposit.txid, depth)
 
       // Prevent this block from being processed twice
       processedBlocks.put(block.height, System.currentTimeMillis)
@@ -93,7 +93,7 @@ class IncomingChainTxProcessor(vals: Vals, swapInProcessor: ActorRef, zmq: Actor
 
   def receive: Receive = {
     // Map pubKeyScript because it requires less computations when comparing against tx stream
-    case message: UserIdAndAddress => recentRequests.put(stringAddressToP2PKH(message.btcAddress), message)
+    case message: AccountAndAddress => recentRequests.put(stringAddressToP2PKH(message.btcAddress), message)
     case Symbol("processor") => sender ! processor
   }
 }

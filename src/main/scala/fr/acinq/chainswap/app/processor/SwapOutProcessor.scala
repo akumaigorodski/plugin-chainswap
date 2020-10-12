@@ -29,36 +29,36 @@ class SwapOutProcessor(vals: Vals, kit: Kit, getPreimage: String => ByteVector32
   }
 
   override def receive: Receive = {
-    case ChainFeeratesFrom(userId) =>
+    case ChainFeeratesFrom(accountId) =>
       val swapOutFeerates = SwapOutFeerates(currentFeerates)
-      context.parent ! ChainFeeratesTo(swapOutFeerates, userId)
+      context.parent ! ChainFeeratesTo(swapOutFeerates, accountId)
 
-    case SwapOutRequestFrom(request, userId) =>
+    case SwapOutRequestFrom(request, accountId) =>
       val chainFee = selectedBlockTarget(request).fee
       val totalAmount = chainFee + request.amount
 
       if (Try(addressToPublicKeyScript(request.btcAddress, kit.nodeParams.chainHash).head).isFailure) {
-        logger.info(s"PLGN ChainSwap, SwapOutRequestFrom, fail=invalid chain address, address=${request.btcAddress}, userId=$userId")
-        context.parent ! SwapOutDeniedTo(request.btcAddress, "Provided bitcoin address should be valid", userId)
+        logger.info(s"PLGN ChainSwap, SwapOutRequestFrom, fail=invalid chain address, address=${request.btcAddress}, accountId=$accountId")
+        context.parent ! SwapOutDeniedTo(request.btcAddress, "Provided bitcoin address should be valid", accountId)
       } else if (totalAmount * vals.chainBalanceReserve > Btc(vals.bitcoinAPI.getBalance).toSatoshi) {
-        logger.info(s"PLGN ChainSwap, SwapOutRequestFrom, fail=depleted chain wallet, balance=${vals.bitcoinAPI.getBalance}btc, userId=$userId")
-        context.parent ! SwapOutDeniedTo(request.btcAddress, "Currently we don't have enough chain funds to handle your order, please try again later", userId)
+        logger.info(s"PLGN ChainSwap, SwapOutRequestFrom, fail=depleted chain wallet, balance=${vals.bitcoinAPI.getBalance}btc, accountId=$accountId")
+        context.parent ! SwapOutDeniedTo(request.btcAddress, "Currently we don't have enough chain funds to handle your order, please try again later", accountId)
       } else if (Satoshi(vals.chainMinWithdrawSat) > totalAmount) {
-        logger.info(s"PLGN ChainSwap, SwapOutRequestFrom, fail=too small amount, asked=${request.amount}, userId=$userId")
-        context.parent ! SwapOutDeniedTo(request.btcAddress, s"Payment amount should be larger than ${vals.chainMinWithdrawSat}sat", userId)
+        logger.info(s"PLGN ChainSwap, SwapOutRequestFrom, fail=too small amount, asked=${request.amount}, accountId=$accountId")
+        context.parent ! SwapOutDeniedTo(request.btcAddress, s"Payment amount should be larger than ${vals.chainMinWithdrawSat}sat", accountId)
       } else {
-        val preimage = getPreimage(userId)
+        val preimage = getPreimage(accountId)
         val paymentHash = Crypto.sha256(preimage)
-        val requestWithFixedFee = SwapOutRequestAndFee(request, userId, chainFee)
+        val requestWithFixedFee = SwapOutRequestAndFee(request, accountId, chainFee)
         val description = s"Payment to address ${request.btcAddress} with amount: ${request.amount.toLong}sat and fee: ${chainFee.toLong}sat"
-        logger.info(s"PLGN ChainSwap, SwapOutRequestFrom, success address=${request.btcAddress}, amountSat=${request.amount.toLong}, feeSat=${chainFee.toLong}, paymentHash=${paymentHash.toHex}, userId=$userId")
+        logger.info(s"PLGN ChainSwap, SwapOutRequestFrom, success address=${request.btcAddress}, amountSat=${request.amount.toLong}, feeSat=${chainFee.toLong}, paymentHash=${paymentHash.toHex}, accountId=$accountId")
         kit.paymentHandler ! ReceivePayment(Some(totalAmount.toMilliSatoshi), description, Some(kit.nodeParams.paymentRequestExpiry.toSeconds), paymentPreimage = Some(preimage), paymentType = PaymentType.SwapOut)
         pendingRequests.put(paymentHash, requestWithFixedFee)
       }
 
     case message: PaymentRequest =>
-      Option(pendingRequests getIfPresent message.paymentHash) foreach { case SwapOutRequestAndFee(request, userId, agreedUponFee) =>
-        context.parent ! SwapOutResponseTo(SwapOutResponse(request.amount, agreedUponFee, PaymentRequest write message), userId)
+      Option(pendingRequests getIfPresent message.paymentHash) foreach { case SwapOutRequestAndFee(request, accountId, agreedUponFee) =>
+        context.parent ! SwapOutResponseTo(SwapOutResponse(request.amount, agreedUponFee, PaymentRequest write message), accountId)
       }
 
     case message: Status.Failure =>
@@ -72,12 +72,12 @@ class SwapOutProcessor(vals: Vals, kit: Kit, getPreimage: String => ByteVector32
       (enoughWrapOpt, kit.wallet) match {
         case (Some(wrap), wallet: BitcoinCoreWallet) =>
           wallet.sendToAddress(wrap.request.btcAddress, wrap.request.amount, wrap.request.blockTarget) onComplete {
-            case Success(txid) => logger.info(s"PLGN ChainSwap, sendToAddress, success txid=${txid.toHex}, paymentHash=${message.paymentHash.toHex}, userId=${wrap.userId}")
-            case Failure(err) => logger.info(s"PLGN ChainSwap, sendToAddress, fail reason=${err.getMessage}, paymentHash=${message.paymentHash.toHex}, userId=${wrap.userId}")
+            case Success(txid) => logger.info(s"PLGN ChainSwap, sendToAddress, success txid=${txid.toHex}, paymentHash=${message.paymentHash.toHex}, accountId=${wrap.accountId}")
+            case Failure(err) => logger.info(s"PLGN ChainSwap, sendToAddress, fail reason=${err.getMessage}, paymentHash=${message.paymentHash.toHex}, accountId=${wrap.accountId}")
           }
 
         case (Some(wrap), wallet) =>
-          context.parent ! SwapOutDeniedTo(wrap.request.btcAddress, s"Transaction send failure, please contact support", wrap.userId)
+          context.parent ! SwapOutDeniedTo(wrap.request.btcAddress, s"Transaction send failure, please contact support", wrap.accountId)
           logger.info(s"PLGN ChainSwap, sendToAddress, fail reason=wrong wallet, type=${wallet.getClass.getName}")
 
         case _ =>
