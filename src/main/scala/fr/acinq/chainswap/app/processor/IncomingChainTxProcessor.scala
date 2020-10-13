@@ -5,12 +5,10 @@ import slick.jdbc.PostgresProfile.api._
 import scala.jdk.CollectionConverters._
 import scala.collection.parallel.CollectionConverters._
 
-import fr.acinq.chainswap.app.{BTCDeposit, ChainDepositReceived, Tools, AccountAndAddress, Vals}
-import fr.acinq.chainswap.app.dbo.{BTCDeposits, Blocking, Accounts}
 import akka.actor.{Actor, ActorRef}
-
+import fr.acinq.chainswap.app.dbo.{BTCDeposits, Blocking, Accounts}
+import fr.acinq.chainswap.app.{BTCDeposit, ChainDepositReceived, Tools, AccountAndAddress, Vals}
 import wf.bitcoin.javabitcoindrpcclient.BitcoindRpcClient.Block
-import fr.acinq.chainswap.app.Tools.DuplicateInsertMatcher
 import com.google.common.cache.Cache
 import slick.jdbc.PostgresProfile
 import grizzled.slf4j.Logging
@@ -21,11 +19,6 @@ import scala.util.Try
 class IncomingChainTxProcessor(vals: Vals, swapInProcessor: ActorRef, zmq: ActorRef, db: PostgresProfile.backend.Database) extends Actor with Logging { me =>
   val processedBlocks: Cache[java.lang.Integer, java.lang.Long] = Tools.makeExpireAfterAccessCache(1440 * 60).maximumSize(1000000).build[java.lang.Integer, java.lang.Long]
   val recentRequests: Cache[ByteVector, AccountAndAddress] = Tools.makeExpireAfterAccessCache(1440).maximumSize(5000000).build[ByteVector, AccountAndAddress]
-
-  val onAnyDatabaseError: DuplicateInsertMatcher[Unit] = new DuplicateInsertMatcher[Unit] {
-    def onOtherError(error: Throwable): Unit = logger.info(s"PLGN ChainSwap, DB, error=$error")
-    def onDuplicateError: Unit = ()
-  }
 
   val processor: ZMQListener = new ZMQListener {
     override def onNewTx(tx: Transaction): Unit = for {
@@ -39,7 +32,7 @@ class IncomingChainTxProcessor(vals: Vals, swapInProcessor: ActorRef, zmq: Actor
 
     override def onNewBlock(block: Block): Unit =
       if (Option(processedBlocks getIfPresent block.height).isEmpty)
-        try processBlock(block) catch onAnyDatabaseError.matcher
+        processBlock(block)
 
     private def processBlock(block: Block): Unit = {
       // 1. Obtain address/outIndex/txid tuples from each tx

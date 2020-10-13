@@ -5,7 +5,6 @@ import net.ceedubs.ficus.readers.ArbitraryTypeReader._
 import com.typesafe.config.{Config => Configuration, ConfigFactory}
 import wf.bitcoin.javabitcoindrpcclient.BitcoinJSONRPCClient
 import com.google.common.cache.CacheBuilder
-import org.postgresql.util.PSQLException
 import java.util.concurrent.TimeUnit
 import slick.jdbc.PostgresProfile
 import fr.acinq.bitcoin.Base58
@@ -15,16 +14,6 @@ import java.io.File
 object Tools {
   def makeExpireAfterAccessCache(expiryMins: Int): CacheBuilder[AnyRef, AnyRef] = CacheBuilder.newBuilder.expireAfterAccess(expiryMins, TimeUnit.MINUTES)
   def makeExpireAfterWriteCache(expiryMins: Int): CacheBuilder[AnyRef, AnyRef] = CacheBuilder.newBuilder.expireAfterWrite(expiryMins, TimeUnit.MINUTES)
-
-  abstract class DuplicateInsertMatcher[T] {
-    val matcher: PartialFunction[Throwable, T] = {
-      case dup: PSQLException if "23505" == dup.getSQLState => onDuplicateError
-      case otherDatabaseError: Throwable => onOtherError(otherDatabaseError)
-    }
-
-    def onDuplicateError: T
-    def onOtherError(error: Throwable): T
-  }
 }
 
 object Config {
