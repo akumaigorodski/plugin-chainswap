@@ -3,8 +3,8 @@ package fr.acinq.chainswap.app.dbo
 import scala.concurrent.duration._
 import slick.jdbc.PostgresProfile.api._
 import fr.acinq.chainswap.app.dbo.Blocking._
-
 import slick.lifted.{Index, Tag}
+
 import slick.jdbc.PostgresProfile.backend.Database
 import scala.concurrent.Await
 import akka.util.Timeout
@@ -17,7 +17,6 @@ object Blocking {
   type RepString = Rep[String]
 
   val span: FiniteDuration = 25.seconds
-  val longSpan: FiniteDuration = 5.minutes
   implicit val askTimeout: Timeout = Timeout(30.seconds)
   def txRead[T](act: DBIOAction[T, NoStream, Effect.Read], db: Database): T = Await.result(db.run(act.transactionally), span)
   def txWrite[T](act: DBIOAction[T, NoStream, Effect.Write], db: Database): T = Await.result(db.run(act.transactionally), span)
@@ -53,7 +52,7 @@ class Accounts(tag: Tag) extends Table[Accounts.DbType](tag, Accounts.tableName)
 
 
 object BTCDeposits {
-  val tableName = "btc_deposits"
+  final val tableName = "btc_deposits"
   val model = TableQuery[BTCDeposits]
 
   type DbType = (Long, String, Long, String, Long, Long, Long)

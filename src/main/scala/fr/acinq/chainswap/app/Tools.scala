@@ -18,7 +18,9 @@ object Tools {
 
 object Config {
   val config: Configuration = ConfigFactory parseFile new File(s"${System getProperty "user.dir"}/src/main/resources", "chainswap.conf")
+
   val db: PostgresProfile.backend.Database = PostgresProfile.backend.Database.forConfig("config.relationalDb", config)
+
   val vals: Vals = config.as[Vals]("config.vals")
 }
 
@@ -27,6 +29,8 @@ case class Vals(btcRPCApi: String, btcZMQApi: String, rewindBlocks: Int, isTestn
                 feePerKbDivider: Double, chainBalanceReserve: Int, chainMinWithdrawSat: Long) {
 
   val addressPrefix: Byte = if (isTestnet) Base58.Prefix.PubkeyAddressTestnet else Base58.Prefix.PubkeyAddress
+
   val bitcoinAPI: BitcoinJSONRPCClient = new BitcoinJSONRPCClient(btcRPCApi)
+
   val lookBackPeriodMsecs: Long = 1000L * 3600 * 24 * lookBackPeriodDays
 }
