@@ -75,14 +75,14 @@ class SwapInProcessor(vals: Vals, kit: Kit, db: PostgresProfile.backend.Database
 
     case request @ SwapInRequestFrom(accountId) =>
       val query = Accounts.findByAccountIdCompiled(accountId)
-      val addressOpt = Blocking.txRead(query.result, db)
+      val addressOpt = Blocking.txRead(query.result, db).headOption
 
       addressOpt match {
-        case btcAddress +: _ =>
+        case Some(btcAddress) =>
           val response = SwapInResponse(btcAddress)
           context.parent ! SwapInResponseTo(response, accountId)
 
-        case _ =>
+        case None =>
           val tuple = (vals.bitcoinAPI.getNewAddress, accountId)
           Blocking.txWrite(Accounts.insertCompiled += tuple, db)
           self ! request
