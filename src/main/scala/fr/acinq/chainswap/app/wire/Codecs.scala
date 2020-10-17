@@ -66,7 +66,7 @@ object Codecs {
     ).as[SwapOutDenied]
 
 
-  def decode(wrap: UnknownMessage): ProtocolMessage = wrap.tag match {
+  def decode(wrap: UnknownMessage): ChainSwapMessage = wrap.tag match {
     case SWAP_IN_REQUEST_MESSAGE_TAG => swapInRequestCodec.decode(wrap.data.toBitVector).require.value
     case SWAP_IN_RESPONSE_MESSAGE_TAG => swapInResponseCodec.decode(wrap.data.toBitVector).require.value
     case SWAP_IN_WITHDRAW_REQUEST_MESSAGE_TAG => swapInWithdrawRequestCodec.decode(wrap.data.toBitVector).require.value
@@ -78,7 +78,7 @@ object Codecs {
     case SWAP_OUT_DENIED_MESSAGE_TAG => swapOutDeniedCodec.decode(wrap.data.toBitVector).require.value
   }
 
-  def toUnknownMessage(message: ProtocolMessage): UnknownMessage = message match {
+  def toUnknownMessage(message: ChainSwapMessage): UnknownMessage = message match {
     case SwapInRequest => UnknownMessage(SWAP_IN_REQUEST_MESSAGE_TAG, swapInRequestCodec.encode(SwapInRequest).require.toByteVector)
     case msg: SwapInResponse => UnknownMessage(SWAP_IN_RESPONSE_MESSAGE_TAG, swapInResponseCodec.encode(msg).require.toByteVector)
     case msg: SwapInState => UnknownMessage(SWAP_IN_STATE_MESSAGE_TAG, swapInStateCodec.encode(msg).require.toByteVector)

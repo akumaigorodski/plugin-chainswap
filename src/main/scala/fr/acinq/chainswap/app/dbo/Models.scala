@@ -70,7 +70,7 @@ object BTCDeposits {
 
   // Insert which silently ignores duplicate records
   def insert(btcAddress: String, outIdx: Long, txid: String, sat: Double, depth: Long) = sqlu"""
-    INSERT INTO #${BTCDeposits.tableName}(btc_address, out_index, txid, sat, depth, stamp)
+    INSERT INTO #${BTCDeposits.tableName} (btc_address, out_index, txid, sat, depth, stamp)
     VALUES ($btcAddress, $outIdx, $txid, $sat, $depth, ${System.currentTimeMillis})
     ON CONFLICT DO NOTHING
   """
