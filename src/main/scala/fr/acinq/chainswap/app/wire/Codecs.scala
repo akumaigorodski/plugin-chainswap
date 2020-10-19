@@ -5,7 +5,7 @@ import fr.acinq.chainswap.app._
 import fr.acinq.chainswap.app.ChainSwap._
 import fr.acinq.eclair.wire.CommonCodecs._
 import fr.acinq.eclair.wire.UnknownMessage
-import scodec.Codec
+import scodec.{Attempt, Codec}
 
 
 object Codecs {
@@ -66,16 +66,16 @@ object Codecs {
     ).as[SwapOutDenied]
 
 
-  def decode(wrap: UnknownMessage): ChainSwapMessage = wrap.tag match {
-    case SWAP_IN_REQUEST_MESSAGE_TAG => swapInRequestCodec.decode(wrap.data.toBitVector).require.value
-    case SWAP_IN_RESPONSE_MESSAGE_TAG => swapInResponseCodec.decode(wrap.data.toBitVector).require.value
-    case SWAP_IN_WITHDRAW_REQUEST_MESSAGE_TAG => swapInWithdrawRequestCodec.decode(wrap.data.toBitVector).require.value
-    case SWAP_IN_WITHDRAW_DENIED_MESSAGE_TAG => swapInWithdrawDeniedCodec.decode(wrap.data.toBitVector).require.value
-    case SWAP_IN_STATE_MESSAGE_TAG => swapInStateCodec.decode(wrap.data.toBitVector).require.value
-    case SWAP_OUT_FEERATES_MESSAGE_TAG => swapOutFeeratesCodec.decode(wrap.data.toBitVector).require.value
-    case SWAP_OUT_REQUEST_MESSAGE_TAG => swapOutRequestCodec.decode(wrap.data.toBitVector).require.value
-    case SWAP_OUT_RESPONSE_MESSAGE_TAG => swapOutResponseCodec.decode(wrap.data.toBitVector).require.value
-    case SWAP_OUT_DENIED_MESSAGE_TAG => swapOutDeniedCodec.decode(wrap.data.toBitVector).require.value
+  def decode(wrap: UnknownMessage): Attempt[ChainSwapMessage] = wrap.tag match {
+    case SWAP_IN_REQUEST_MESSAGE_TAG => swapInRequestCodec.decode(wrap.data.toBitVector).map(_.value)
+    case SWAP_IN_RESPONSE_MESSAGE_TAG => swapInResponseCodec.decode(wrap.data.toBitVector).map(_.value)
+    case SWAP_IN_WITHDRAW_REQUEST_MESSAGE_TAG => swapInWithdrawRequestCodec.decode(wrap.data.toBitVector).map(_.value)
+    case SWAP_IN_WITHDRAW_DENIED_MESSAGE_TAG => swapInWithdrawDeniedCodec.decode(wrap.data.toBitVector).map(_.value)
+    case SWAP_IN_STATE_MESSAGE_TAG => swapInStateCodec.decode(wrap.data.toBitVector).map(_.value)
+    case SWAP_OUT_FEERATES_MESSAGE_TAG => swapOutFeeratesCodec.decode(wrap.data.toBitVector).map(_.value)
+    case SWAP_OUT_REQUEST_MESSAGE_TAG => swapOutRequestCodec.decode(wrap.data.toBitVector).map(_.value)
+    case SWAP_OUT_RESPONSE_MESSAGE_TAG => swapOutResponseCodec.decode(wrap.data.toBitVector).map(_.value)
+    case SWAP_OUT_DENIED_MESSAGE_TAG => swapOutDeniedCodec.decode(wrap.data.toBitVector).map(_.value)
   }
 
   def toUnknownMessage(message: ChainSwapMessage): UnknownMessage = message match {

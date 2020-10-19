@@ -1,7 +1,7 @@
 package fr.acinq.chainswap.app
 
+import fr.acinq.eclair._
 import scala.concurrent.duration._
-import scala.util.{Failure, Success, Try}
 import akka.actor.{Actor, ActorRef, OneForOneStrategy, Props}
 import fr.acinq.eclair.io.{PeerConnected, PeerDisconnected, UnknownMessageReceived}
 import fr.acinq.chainswap.app.processor.{IncomingChainTxProcessor, SwapInProcessor, SwapOutProcessor, ZMQActor}
@@ -11,7 +11,7 @@ import fr.acinq.chainswap.app.wire.Codecs
 import slick.jdbc.PostgresProfile
 import scala.collection.mutable
 import grizzled.slf4j.Logging
-import fr.acinq.eclair._
+import scodec.Attempt
 
 
 class Worker(db: PostgresProfile.backend.Database, vals: Vals, kit: Kit) extends Actor with Logging {
@@ -46,11 +46,11 @@ class Worker(db: PostgresProfile.backend.Database, vals: Vals, kit: Kit) extends
       }
 
     case peerMessage: UnknownMessageReceived =>
-      Try(Codecs decode peerMessage.message) match {
-        case Success(SwapInRequest) => swapInProcessor ! SwapInRequestFrom(peerMessage.nodeId.toString)
-        case Success(msg: SwapInWithdrawRequest) => swapInProcessor ! SwapInWithdrawRequestFrom(msg, peerMessage.nodeId.toString)
-        case Success(msg: SwapOutRequest) => swapOutProcessor ! SwapOutRequestFrom(msg, peerMessage.nodeId.toString)
-        case Failure(_) => logger.info(s"PLGN ChainSwap, parsing fail, tag=${peerMessage.message.tag}")
+      Codecs.decode(peerMessage.message) match {
+        case Attempt.Successful(SwapInRequest) => swapInProcessor ! SwapInRequestFrom(peerMessage.nodeId.toString)
+        case Attempt.Successful(msg: SwapInWithdrawRequest) => swapInProcessor ! SwapInWithdrawRequestFrom(msg, peerMessage.nodeId.toString)
+        case Attempt.Successful(msg: SwapOutRequest) => swapOutProcessor ! SwapOutRequestFrom(msg, peerMessage.nodeId.toString)
+        case _: Attempt.Failure => logger.info(s"PLGN ChainSwap, parsing fail, tag=${peerMessage.message.tag}")
         case _ => // Do nothing
       }
 
