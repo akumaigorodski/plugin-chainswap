@@ -63,10 +63,7 @@ object BTCDeposits {
   private def findWaitingForAccount(accountId: RepString, threshold: RepLong, limit: RepLong) = findFor(accountId).filter(deposit => deposit.depth < threshold && deposit.stamp > limit)
   private def findSumCompleteForAccount(accountId: RepString, threshold: RepLong) = findFor(accountId).filter(_.depth >= threshold).map(_.sat).sum
 
-  def clearUp = sqlu"""
-     DELETE FROM #${BTCDeposits.tableName} B WHERE NOT EXISTS
-     (SELECT * FROM #${Accounts.tableName} U WHERE B.btc_address = U.btc_address)
-  """
+  val clearUp = sqlu"DELETE FROM #${BTCDeposits.tableName} deposits WHERE NOT EXISTS (SELECT * FROM #${Accounts.tableName} accounts WHERE deposits.btc_address = accounts.btc_address)"
 
   // Insert which silently ignores duplicate records
   def insert(btcAddress: String, outIdx: Long, txid: String, sat: Double, depth: Long) = sqlu"""
