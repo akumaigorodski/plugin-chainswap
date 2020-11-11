@@ -17,40 +17,6 @@ case class BTCDeposit(id: Long, btcAddress: String, outIndex: Long, txid: String
   def toPendingDeposit: PendingDeposit = PendingDeposit(btcAddress, ByteVector32(ByteVector fromValidHex txid), Satoshi(amount), stamp)
 }
 
-case class AccountStatusFrom(accountId: String)
-
-case class AccountStatusTo(state: SwapInState, accountId: String)
-
-
-case class SwapInRequestFrom(accountId: String)
-
-case class SwapInResponseTo(response: SwapInResponse, accountId: String)
-
-
-case class SwapInWithdrawRequestFrom(request: SwapInWithdrawRequest, accountId: String)
-
-case class SwapInWithdrawRequestDeniedTo(paymentRequest: String, reason: String, accountId: String)
-
-
-case object UpdateChainFeerates
-
-
-case class ChainFeeratesFrom(accountId: String)
-
-case class ChainFeeratesTo(feerates: SwapOutFeerates, accountId: String)
-
-
-case class SwapOutRequestFrom(request: SwapOutRequest, accountId: String)
-
-case class SwapOutResponseTo(response: SwapOutResponse, accountId: String)
-
-case class SwapOutDeniedTo(bitcoinAddress: String, reason: String, accountId: String)
-
-
-case class SwapOutRequestAndFee(request: SwapOutRequest, accountId: String, fee: Satoshi) {
-  val totalAmount: MilliSatoshi = (request.amount + fee).toMilliSatoshi
-}
-
 // Protocol messages
 
 sealed trait ChainSwapMessage

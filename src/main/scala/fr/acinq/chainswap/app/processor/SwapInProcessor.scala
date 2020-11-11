@@ -3,11 +3,14 @@ package fr.acinq.chainswap.app.processor
 import fr.acinq.eclair._
 import fr.acinq.chainswap.app._
 import slick.jdbc.PostgresProfile.api._
+import fr.acinq.chainswap.app.processor.SwapInProcessor._
+
 import scala.util.{Failure, Success, Try}
 import fr.acinq.eclair.{Kit, MilliSatoshi}
 import com.google.common.cache.{CacheLoader, LoadingCache}
 import fr.acinq.eclair.payment.{PaymentFailed, PaymentRequest, PaymentSent}
 import fr.acinq.chainswap.app.dbo.{Account2LNWithdrawals, BTCDeposits, Blocking, Accounts}
+
 import fr.acinq.eclair.payment.send.PaymentInitiator.SendPaymentRequest
 import fr.acinq.chainswap.app.dbo.Blocking.askTimeout
 import fr.acinq.eclair.router.RouteCalculation
@@ -19,6 +22,17 @@ import akka.actor.Actor
 import akka.pattern.ask
 import java.util.UUID
 
+
+object SwapInProcessor {
+  case class AccountStatusFrom(accountId: String)
+  case class AccountStatusTo(state: SwapInState, accountId: String)
+
+  case class SwapInRequestFrom(accountId: String)
+  case class SwapInResponseTo(response: SwapInResponse, accountId: String)
+
+  case class SwapInWithdrawRequestFrom(request: SwapInWithdrawRequest, accountId: String)
+  case class SwapInWithdrawRequestDeniedTo(paymentRequest: String, reason: String, accountId: String)
+}
 
 class SwapInProcessor(vals: Vals, kit: Kit, db: PostgresProfile.backend.Database) extends Actor with Logging {
   context.system.eventStream.subscribe(channel = classOf[PaymentFailed], subscriber = self)

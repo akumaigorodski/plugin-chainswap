@@ -3,6 +3,7 @@ package fr.acinq.chainswap.app.processor
 import fr.acinq.eclair._
 import fr.acinq.chainswap.app._
 import scala.concurrent.duration._
+import fr.acinq.chainswap.app.processor.SwapOutProcessor._
 
 import akka.actor.{Actor, Status}
 import scala.util.{Failure, Success, Try}
@@ -16,6 +17,21 @@ import scala.concurrent.ExecutionContext.Implicits.global
 import fr.acinq.eclair.blockchain.bitcoind.BitcoinCoreWallet
 import fr.acinq.eclair.payment.receive.MultiPartHandler.ReceivePayment
 
+
+object SwapOutProcessor {
+  case object UpdateChainFeerates
+
+  case class ChainFeeratesFrom(accountId: String)
+  case class ChainFeeratesTo(feerates: SwapOutFeerates, accountId: String)
+
+  case class SwapOutRequestFrom(request: SwapOutRequest, accountId: String)
+  case class SwapOutResponseTo(response: SwapOutResponse, accountId: String)
+  case class SwapOutDeniedTo(bitcoinAddress: String, reason: String, accountId: String)
+
+  case class SwapOutRequestAndFee(request: SwapOutRequest, accountId: String, fee: Satoshi) {
+    val totalAmount: MilliSatoshi = (request.amount + fee).toMilliSatoshi
+  }
+}
 
 class SwapOutProcessor(vals: Vals, kit: Kit, getPreimage: String => ByteVector32) extends Actor with Logging {
   context.system.scheduler.scheduleWithFixedDelay(0.seconds, 60.minutes, self, UpdateChainFeerates)

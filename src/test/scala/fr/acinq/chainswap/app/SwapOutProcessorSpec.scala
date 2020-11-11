@@ -28,23 +28,23 @@ class SwapOutProcessorSpec extends AnyFunSuite {
     val userId = "user-id-1"
     synchronized(wait(100))
 
-    swapOutProcessor ! ChainFeeratesFrom(userId)
-    eventListener.expectMsgType[ChainFeeratesTo]
+    swapOutProcessor ! SwapOutProcessor.ChainFeeratesFrom(userId)
+    eventListener.expectMsgType[SwapOutProcessor.ChainFeeratesTo]
 
-    swapOutProcessor ! SwapOutRequestFrom(SwapOutRequest(100000L.sat, btcAddress = "wrong-address", blockTarget = 36), userId)
-    eventListener.expectMsgType[SwapOutDeniedTo] // Wrong address
-    swapOutProcessor ! SwapOutRequestFrom(SwapOutRequest(100L.sat, btcAddress = "n3RzaNTD8LnBGkREBjSkouy5gmd2dVf7jQ", blockTarget = 36), userId)
-    eventListener.expectMsgType[SwapOutDeniedTo] // Too small withdraw amount
-    swapOutProcessor ! SwapOutRequestFrom(SwapOutRequest(2500000.sat, btcAddress = "n3RzaNTD8LnBGkREBjSkouy5gmd2dVf7jQ", blockTarget = 20000), userId)
-    eventListener.expectMsgType[SwapOutDeniedTo] // We don't have enough reserve in chain wallet
+    swapOutProcessor ! SwapOutProcessor.SwapOutRequestFrom(SwapOutRequest(100000L.sat, btcAddress = "wrong-address", blockTarget = 36), userId)
+    eventListener.expectMsgType[SwapOutProcessor.SwapOutDeniedTo] // Wrong address
+    swapOutProcessor ! SwapOutProcessor.SwapOutRequestFrom(SwapOutRequest(100L.sat, btcAddress = "n3RzaNTD8LnBGkREBjSkouy5gmd2dVf7jQ", blockTarget = 36), userId)
+    eventListener.expectMsgType[SwapOutProcessor.SwapOutDeniedTo] // Too small withdraw amount
+    swapOutProcessor ! SwapOutProcessor.SwapOutRequestFrom(SwapOutRequest(2500000.sat, btcAddress = "n3RzaNTD8LnBGkREBjSkouy5gmd2dVf7jQ", blockTarget = 20000), userId)
+    eventListener.expectMsgType[SwapOutProcessor.SwapOutDeniedTo] // We don't have enough reserve in chain wallet
 
-    swapOutProcessor ! SwapOutRequestFrom(SwapOutRequest(1000000.sat, btcAddress = "n3RzaNTD8LnBGkREBjSkouy5gmd2dVf7jQ", blockTarget = 20000), userId) // handler is notified
+    swapOutProcessor ! SwapOutProcessor.SwapOutRequestFrom(SwapOutRequest(1000000.sat, btcAddress = "n3RzaNTD8LnBGkREBjSkouy5gmd2dVf7jQ", blockTarget = 20000), userId) // handler is notified
     swapOutProcessor ! pr // handler returns a pr
-    eventListener.expectMsgType[SwapOutResponseTo] // pending swap-out is found in cache
+    eventListener.expectMsgType[SwapOutProcessor.SwapOutResponseTo] // pending swap-out is found in cache
 
     swapOutProcessor ! PaymentReceived(pr.paymentHash, PartialPayment(100000000L.msat, ByteVector32.Zeroes, timestamp = 0L) :: Nil)
     eventListener.expectNoMessage // Payment is not complete
     swapOutProcessor ! PaymentReceived(pr.paymentHash, PartialPayment(100000000L.msat, ByteVector32.Zeroes, timestamp = 0L) :: PartialPayment(910000000L.msat, ByteVector32.Zeroes, timestamp = 0L) :: Nil)
-    eventListener.expectMsgType[SwapOutDeniedTo] // Got enough, but wallet type is wrong
+    eventListener.expectMsgType[SwapOutProcessor.SwapOutDeniedTo] // Got enough, but wallet type is wrong
   }
 }
