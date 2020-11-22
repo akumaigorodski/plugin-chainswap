@@ -1,7 +1,6 @@
 package fr.acinq.chainswap.app
 
 import fr.acinq.eclair.{CustomFeaturePlugin, Feature, Kit, Plugin, PluginParams, Setup, UnknownFeature}
-import fr.acinq.chainswap.app.ChainSwap.swapInOutTags
 import fr.acinq.chainswap.app.dbo.Blocking
 import akka.actor.Props
 
@@ -26,13 +25,13 @@ object ChainSwap {
 
 class ChainSwap extends Plugin {
 
-  def onSetup(setup: Setup): Unit = Blocking.createTablesIfNotExist(Config.db)
+  override def onSetup(setup: Setup): Unit = Blocking.createTablesIfNotExist(Config.db)
 
-  def onKit(kit: Kit): Unit = kit.system actorOf Props(classOf[Worker], Config.db, Config.vals, kit)
+  override def onKit(kit: Kit): Unit = kit.system actorOf Props(classOf[Worker], Config.db, Config.vals, kit)
 
   override def params: PluginParams = new CustomFeaturePlugin {
 
-    override def messageTags: Set[Int] = swapInOutTags
+    override def messageTags: Set[Int] = ChainSwap.swapInOutTags
 
     override def feature: Feature = ChainSwapFeature
 
