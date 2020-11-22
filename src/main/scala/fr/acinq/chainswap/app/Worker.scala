@@ -6,7 +6,7 @@ import akka.actor.{Actor, ActorRef, OneForOneStrategy, Props}
 import fr.acinq.eclair.io.{PeerConnected, PeerDisconnected, UnknownMessageReceived}
 import fr.acinq.chainswap.app.processor.{IncomingChainTxProcessor, SwapInProcessor, SwapOutProcessor, ZMQActor}
 import fr.acinq.eclair.channel.Channel.OutgoingMessage
-import fr.acinq.chainswap.app.ChainSwap.messageTags
+import fr.acinq.chainswap.app.ChainSwap.swapInOutTags
 import akka.actor.SupervisorStrategy.Resume
 import fr.acinq.chainswap.app.wire.Codecs
 import slick.jdbc.PostgresProfile
@@ -46,7 +46,7 @@ class Worker(db: PostgresProfile.backend.Database, vals: Vals, kit: Kit) extends
         peer ! OutgoingMessage(Codecs toUnknownMessage swapInState, connection)
       }
 
-    case peerMessage: UnknownMessageReceived if messageTags.contains(peerMessage.message.tag) =>
+    case peerMessage: UnknownMessageReceived if swapInOutTags.contains(peerMessage.message.tag) =>
       // Filter unknown messages related to ChainSwap since there may be other messaging-enabled plugins
 
       Codecs.decode(peerMessage.message) match {
