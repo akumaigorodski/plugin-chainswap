@@ -9,8 +9,8 @@ class WireSpec extends AnyFunSuite {
   test("Correctly process inner messages") {
     assert(decode(toUnknownMessage(SwapInRequest)).require === SwapInRequest)
 
-    val pd1 = PendingDeposit(btcAddress = "1RustyRX2oai4EYYDpQGWvEL62BBGqN9T", txid = randomBytes32, amount = 200000.sat)
-    val pd2 = PendingDeposit(btcAddress = "1RustyRX2oai4EYYDpQGWvEL62BBGqN9T", txid = randomBytes32, amount = 400000.sat)
+    val pd1 = PendingDeposit(btcAddress = "1RustyRX2oai4EYYDpQGWvEL62BBGqN9T", txid = randomBytes32, amount = 200000.sat, System.currentTimeMillis / 1000L)
+    val pd2 = PendingDeposit(btcAddress = "1RustyRX2oai4EYYDpQGWvEL62BBGqN9T", txid = randomBytes32, amount = 400000.sat, System.currentTimeMillis / 1000L)
     val inner1 = SwapInState(balance = 1000.msat, inFlight = 100000L.msat, List(pd1, pd2))
     assert(decode(toUnknownMessage(inner1)).require === inner1)
 
