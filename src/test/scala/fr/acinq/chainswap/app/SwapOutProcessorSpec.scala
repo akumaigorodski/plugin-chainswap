@@ -19,32 +19,34 @@ class SwapOutProcessorSpec extends AnyFunSuite {
     ChainSwapTestUtils.resetEntireDatabase()
     implicit val system: ActorSystem = ActorSystem("test-actor-system")
     val eventListener = TestProbe()(system)
-    val kit = ChainSwapTestUtils.testKit(eventListener.ref)(system)
     val oneMilSat = "lntb10m1p0czexapp5xzhg6h2wc4lm2xd7wn29gm8xla3x805x0k72t0dzvqspzgavcvesdqqxqrrsscqp79qy9qsqsp5tgftdg2r" +
       "8sgh26tt8l4e89auxddln6utfr7xl42sy4zep3cv52fqnj7l37zgckrtg7yvk7czmx8j8p4hkt5fs5r7na2vec5cap8urz4snw97q7huulp9mprcpzrx403hnxhldax2x86h3p8saccxyrual8spe8vyxv"
     val pr = PaymentRequest.read(oneMilSat)
+    val kit = ChainSwapTestUtils.testKit(eventListener.ref, pr)(system)
     val preimage = ByteVector32(ByteVector.fromValidHex("7f4877db7c440358928719f703fd54b409e735624a532fd8af8501dca1f058c6"))
     val swapOutProcessor = eventListener childActorOf Props(classOf[SwapOutProcessor], Config.vals, kit, (userId: String) => preimage)
     val userId = "user-id-1"
     synchronized(wait(100))
 
-    swapOutProcessor ! SwapOutProcessor.ChainFeeratesFrom(userId)
-    eventListener.expectMsgType[SwapOutProcessor.ChainFeeratesTo]
+    // Client sends SwapOutRequest
+    swapOutProcessor ! SwapOutProcessor.ChainInfoRequestFrom(userId)
+    val feerateKey = eventListener.expectMsgType[SwapOutProcessor.ChainInfoResponseTo].info.feerates.feerateKey
 
-    swapOutProcessor ! SwapOutProcessor.SwapOutRequestFrom(SwapOutRequest(100000L.sat, btcAddress = "wrong-address", blockTarget = 36), userId)
+    swapOutProcessor ! SwapOutProcessor.SwapOutRequestFrom(SwapOutTransactionRequest(100000L.sat, btcAddress = "wrong-address", blockTarget = 36, feerateKey), userId)
     eventListener.expectMsgType[SwapOutProcessor.SwapOutDeniedTo] // Wrong address
-    swapOutProcessor ! SwapOutProcessor.SwapOutRequestFrom(SwapOutRequest(100L.sat, btcAddress = "n3RzaNTD8LnBGkREBjSkouy5gmd2dVf7jQ", blockTarget = 36), userId)
+    swapOutProcessor ! SwapOutProcessor.SwapOutRequestFrom(SwapOutTransactionRequest(10L.sat, btcAddress = "n3RzaNTD8LnBGkREBjSkouy5gmd2dVf7jQ", blockTarget = 36, feerateKey), userId)
     eventListener.expectMsgType[SwapOutProcessor.SwapOutDeniedTo] // Too small withdraw amount
-    swapOutProcessor ! SwapOutProcessor.SwapOutRequestFrom(SwapOutRequest(2500000.sat, btcAddress = "n3RzaNTD8LnBGkREBjSkouy5gmd2dVf7jQ", blockTarget = 20000), userId)
+    swapOutProcessor ! SwapOutProcessor.SwapOutRequestFrom(SwapOutTransactionRequest(2500000.sat, btcAddress = "n3RzaNTD8LnBGkREBjSkouy5gmd2dVf7jQ", blockTarget = 36, feerateKey), userId)
     eventListener.expectMsgType[SwapOutProcessor.SwapOutDeniedTo] // We don't have enough reserve in chain wallet
+    swapOutProcessor ! SwapOutProcessor.SwapOutRequestFrom(SwapOutTransactionRequest(250000.sat, btcAddress = "n3RzaNTD8LnBGkREBjSkouy5gmd2dVf7jQ", blockTarget = 36, randomBytes32), userId)
+    eventListener.expectMsgType[SwapOutProcessor.SwapOutDeniedTo] // Unknown feerate key
 
-    swapOutProcessor ! SwapOutProcessor.SwapOutRequestFrom(SwapOutRequest(1000000.sat, btcAddress = "n3RzaNTD8LnBGkREBjSkouy5gmd2dVf7jQ", blockTarget = 20000), userId) // handler is notified
-    swapOutProcessor ! pr // handler returns a pr
+    swapOutProcessor ! SwapOutProcessor.SwapOutRequestFrom(SwapOutTransactionRequest(1000000.sat, btcAddress = "n3RzaNTD8LnBGkREBjSkouy5gmd2dVf7jQ", blockTarget = 36, feerateKey), userId)
     eventListener.expectMsgType[SwapOutProcessor.SwapOutResponseTo] // pending swap-out is found in cache
 
     swapOutProcessor ! PaymentReceived(pr.paymentHash, PartialPayment(100000000L.msat, ByteVector32.Zeroes, timestamp = 0L) :: Nil)
     eventListener.expectNoMessage // Payment is not complete
     swapOutProcessor ! PaymentReceived(pr.paymentHash, PartialPayment(100000000L.msat, ByteVector32.Zeroes, timestamp = 0L) :: PartialPayment(910000000L.msat, ByteVector32.Zeroes, timestamp = 0L) :: Nil)
-    eventListener.expectMsgType[SwapOutProcessor.SwapOutDeniedTo] // Got enough, but wallet type is wrong
+    eventListener.expectNoMessage // Got enough, tx should be initiated, otherwise an error will be logged
   }
 }

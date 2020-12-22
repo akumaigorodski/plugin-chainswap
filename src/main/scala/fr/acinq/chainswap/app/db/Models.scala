@@ -1,8 +1,8 @@
-package fr.acinq.chainswap.app.dbo
+package fr.acinq.chainswap.app.db
 
 import scala.concurrent.duration._
 import slick.jdbc.PostgresProfile.api._
-import fr.acinq.chainswap.app.dbo.Blocking._
+import fr.acinq.chainswap.app.db.Blocking._
 import slick.lifted.{Index, Tag}
 
 import slick.jdbc.PostgresProfile.backend.Database
@@ -17,31 +17,31 @@ object Blocking {
   type RepString = Rep[String]
 
   val span: FiniteDuration = 25.seconds
-  implicit val askTimeout: Timeout = Timeout(30.seconds)
+  implicit val timeout: Timeout = Timeout(span)
   def txRead[T](act: DBIOAction[T, NoStream, Effect.Read], db: Database): T = Await.result(db.run(act.transactionally), span)
   def txWrite[T](act: DBIOAction[T, NoStream, Effect.Write], db: Database): T = Await.result(db.run(act.transactionally), span)
 
   def createTablesIfNotExist(db: Database): Unit = {
-    val tables = Seq(Accounts.model, BTCDeposits.model, Account2LNWithdrawals.model).map(_.schema.createIfNotExists)
+    val tables = Seq(Addresses.model, BTCDeposits.model, Account2LNWithdrawals.model).map(_.schema.createIfNotExists)
     Await.result(db.run(DBIO.sequence(tables).transactionally), span)
   }
 }
 
 
-object Accounts {
-  final val tableName = "accounts"
-  val model = TableQuery[Accounts]
+object Addresses {
+  final val tableName = "addresses"
+  val model = TableQuery[Addresses]
   type DbType = (Long, String, String)
   private val insert = for (x <- model) yield (x.btcAddress, x.accountId)
   private def findByBtcAddress(btcAddress: RepString) = model.filter(_.btcAddress === btcAddress).map(_.accountId)
-  private def findByAccountId(accountId: RepString) = model.filter(_.accountId === accountId).map(_.btcAddress)
+  private def findByAccountId(accountId: RepString) = model.filter(_.accountId === accountId).sortBy(_.id.desc).map(_.btcAddress)
 
   val findByBtcAddressCompiled = Compiled(findByBtcAddress _)
   val findByAccountIdCompiled = Compiled(findByAccountId _)
   val insertCompiled = Compiled(insert)
 }
 
-class Accounts(tag: Tag) extends Table[Accounts.DbType](tag, Accounts.tableName) {
+class Addresses(tag: Tag) extends Table[Addresses.DbType](tag, Addresses.tableName) {
   def id: Rep[Long] = column[Long]("id", O.PrimaryKey, O.AutoInc)
   def btcAddress: Rep[String] = column[String]("btc_address", O.Unique)
   def accountId: Rep[String] = column[String]("account_id")
@@ -59,18 +59,15 @@ object BTCDeposits {
   private def findAllWaiting(threshold: RepLong, limit: RepLong) = model.filter(x => x.depth < threshold && x.stamp > limit)
   private def findAllDepthUpdatable(id: RepLong) = model.filter(_.id === id).map(_.depth)
 
-  private def findFor(accountId: RepString) = Accounts.model.filter(_.accountId === accountId).join(BTCDeposits.model).on(_.btcAddress === _.btcAddress).map(_._2)
+  private def findFor(accountId: RepString) = Addresses.model.filter(_.accountId === accountId).join(BTCDeposits.model).on(_.btcAddress === _.btcAddress).map(_._2)
   private def findWaitingForAccount(accountId: RepString, threshold: RepLong, limit: RepLong) = findFor(accountId).filter(deposit => deposit.depth < threshold && deposit.stamp > limit)
   private def findSumCompleteForAccount(accountId: RepString, threshold: RepLong) = findFor(accountId).filter(_.depth >= threshold).map(_.sat).sum
 
-  val clearUp = sqlu"DELETE FROM #${BTCDeposits.tableName} deposits WHERE NOT EXISTS (SELECT * FROM #${Accounts.tableName} accounts WHERE deposits.btc_address = accounts.btc_address)"
+  def clearUp = sqlu"DELETE FROM #${BTCDeposits.tableName} deposits WHERE NOT EXISTS (SELECT * FROM #${Addresses.tableName} accounts WHERE deposits.btc_address = accounts.btc_address)"
 
   // Insert which silently ignores duplicate records
-  def insert(btcAddress: String, outIdx: Long, txid: String, sat: Double, depth: Long) = sqlu"""
-    INSERT INTO #${BTCDeposits.tableName} (btc_address, out_index, txid, sat, depth, stamp)
-    VALUES ($btcAddress, $outIdx, $txid, $sat, $depth, ${System.currentTimeMillis})
-    ON CONFLICT DO NOTHING
-  """
+  def insert(btcAddress: String, outIdx: Long, txid: String, sat: Double, depth: Long, stamp: Long = System.currentTimeMillis) =
+    sqlu"INSERT INTO #${BTCDeposits.tableName} (btc_address, out_index, txid, sat, depth, stamp) VALUES ($btcAddress, $outIdx, $txid, $sat, $depth, $stamp) ON CONFLICT DO NOTHING"
 
   val findSumCompleteForAccountCompiled = Compiled(findSumCompleteForAccount _)
   val findAllDepthUpdatableCompiled = Compiled(findAllDepthUpdatable _)
@@ -101,15 +98,15 @@ object Account2LNWithdrawals {
   final val SUCCEEDED = 2L
   final val FAILED = 3L
 
-  type DbType = (Long, String, String, Long, Long, Long, Long)
-  private val insert = for (x <- model) yield (x.accountId, x.paymentId, x.feeReserveMsat, x.paymentMsat, x.stamp, x.status)
-  private def findStatusFeeByIdUpdatable(paymentId: RepString) = model.filter(x => x.paymentId === paymentId).map(w => w.status -> w.feeReserveMsat)
-  private def findSuccessfulWithdrawalSum(accountId: RepString) = model.filter(x => x.status === SUCCEEDED && x.accountId === accountId).map(w => w.paymentMsat + w.feeReserveMsat).sum
-  private def findPendingWithdrawalsByAccount(accountId: RepString) = model.filter(x => x.status === PENDING && x.accountId === accountId).map(w => w.paymentMsat -> w.feeReserveMsat)
+  type DbType = (Long, String, String, Long, Long, Long)
+  private val insert = for (x <- model) yield (x.accountId, x.paymentId, x.paymentMsat, x.stamp, x.status)
+  private def findStatusByIdUpdatable(paymentId: RepString) = model.filter(x => x.paymentId === paymentId).map(_.status)
+  private def findSuccessfulWithdrawalSum(accountId: RepString) = model.filter(x => x.status === SUCCEEDED && x.accountId === accountId).map(_.paymentMsat).sum
+  private def findPendingWithdrawalsByAccount(accountId: RepString) = model.filter(x => x.status === PENDING && x.accountId === accountId).map(_.paymentMsat).sum
   private def findAccountById(paymentId: RepString) = model.filter(_.paymentId === paymentId).map(_.accountId)
 
   val insertCompiled = Compiled(insert)
-  val findStatusFeeByIdUpdatableCompiled = Compiled(findStatusFeeByIdUpdatable _)
+  val findStatusByIdUpdatableCompiled = Compiled(findStatusByIdUpdatable _)
   val findSuccessfulWithdrawalSumCompiled = Compiled(findSuccessfulWithdrawalSum _)
   val findPendingWithdrawalsByAccountCompiled = Compiled(findPendingWithdrawalsByAccount _)
   val findAccountByIdCompiled = Compiled(findAccountById _)
@@ -119,11 +116,10 @@ class Account2LNWithdrawals(tag: Tag) extends Table[Account2LNWithdrawals.DbType
   def id: Rep[Long] = column[Long]("id", O.PrimaryKey, O.AutoInc)
   def accountId: Rep[String] = column[String]("account_id")
   def paymentId: Rep[String] = column[String]("payment_id", O.Unique)
-  def feeReserveMsat: Rep[Long] = column[Long]("fee_reserve_msat")
   def paymentMsat: Rep[Long] = column[Long]("payment_msat")
   def stamp: Rep[Long] = column[Long]("stamp")
   def status: Rep[Long] = column[Long]("status")
 
   def statusAccountIdIdx: Index = index("account_ln_withdrawals__status__account_id__idx", (status, accountId), unique = false)
-  def * = (id, accountId, paymentId, feeReserveMsat, paymentMsat, stamp, status)
+  def * = (id, accountId, paymentId, paymentMsat, stamp, status)
 }

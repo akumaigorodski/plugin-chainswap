@@ -6,7 +6,7 @@ import scala.jdk.CollectionConverters._
 import scala.collection.parallel.CollectionConverters._
 
 import akka.actor.{Actor, ActorRef}
-import fr.acinq.chainswap.app.dbo.{BTCDeposits, Blocking, Accounts}
+import fr.acinq.chainswap.app.db.{BTCDeposits, Blocking, Addresses}
 import fr.acinq.chainswap.app.{BTCDeposit, ChainDepositReceived, Tools, AccountAndAddress, Vals}
 import wf.bitcoin.javabitcoindrpcclient.BitcoindRpcClient.Block
 import com.google.common.cache.Cache
@@ -56,17 +56,21 @@ class IncomingChainTxProcessor(vals: Vals, swapInProcessor: ActorRef, zmq: Actor
       // Remove inserts which do not match any user address
       Blocking.txWrite(BTCDeposits.clearUp, db)
 
+      // Give up on waiting if it stays in mempool for this long
       val lookBackPeriod = System.currentTimeMillis - vals.lookBackPeriodMsecs
       // Select specifically PENDING txs, importantly NOT the ones which exceed our depth threshold
-      val query = BTCDeposits.findAllWaitingCompiled(vals.depthThreshold, lookBackPeriod)
+      val pending = BTCDeposits.findAllWaitingCompiled(vals.depthThreshold, lookBackPeriod)
 
       for {
-        btcDeposit <- Blocking.txRead(query.result, db).map(BTCDeposit.tupled).par
+        btcDeposit <- Blocking.txRead(pending.result, db).map(BTCDeposit.tupled).par
         // Relies on deposit still pending in our db, but having enough confs in bitcoind
         depth <- getConfs(btcDeposit.txid, btcDeposit.outIndex) if depth >= vals.depthThreshold
         _ = Blocking.txWrite(BTCDeposits.findAllDepthUpdatableCompiled(btcDeposit.id).update(depth), db)
-        accountId <- Blocking.txRead(Accounts.findByBtcAddressCompiled(btcDeposit.btcAddress).result, db)
-      } swapInProcessor ! ChainDepositReceived(accountId, Satoshi(btcDeposit.amount), btcDeposit.txid, depth)
+        accountId <- Blocking.txRead(Addresses.findByBtcAddressCompiled(btcDeposit.btcAddress).result, db)
+        // To increase user privacy we add a new address on each successful deposit, old addresses stay valid
+        _ = Blocking.txWrite(Addresses.insertCompiled += (vals.bitcoinAPI.getNewAddress, accountId), db)
+        reply = ChainDepositReceived(accountId, Satoshi(btcDeposit.amount), btcDeposit.txid, depth)
+      } swapInProcessor ! reply
 
       // Prevent this block from being processed twice
       processedBlocks.put(block.height, System.currentTimeMillis)
@@ -82,7 +86,7 @@ class IncomingChainTxProcessor(vals: Vals, swapInProcessor: ActorRef, zmq: Actor
 
   def getTx(txid: String): Option[Transaction] = Try(vals.bitcoinAPI getRawTransactionHex txid).map(Transaction.read).toOption
   def getConfs(txid: String, idx: Long): Option[Long] = Try(vals.bitcoinAPI.getTxOut(txid, idx, false).confirmations).toOption
-  def parse(pubKeyScript: ByteVector): Option[List[ScriptElt]] = Try(Script parse pubKeyScript).toOption
+  private def parse(pubKeyScript: ByteVector) = Try(Script parse pubKeyScript).toOption
 
   def receive: Receive = {
     // Map pubKeyScript because it requires less computations when comparing against tx stream

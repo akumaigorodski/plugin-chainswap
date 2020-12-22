@@ -32,13 +32,7 @@ class Worker(db: PostgresProfile.backend.Database, vals: Vals, kit: Kit) extends
 
     case PeerConnected(peer, remoteNodeId, info) if info.remoteInit.features.hasPluginFeature(ChainSwapFeature.plugin) =>
       account2Connection(remoteNodeId.toString) = PeerAndConnection(peer, info.peerConnection)
-      swapOutProcessor ! SwapOutProcessor.ChainFeeratesFrom(remoteNodeId.toString)
       swapInProcessor ! SwapInProcessor.AccountStatusFrom(remoteNodeId.toString)
-
-    case SwapOutProcessor.ChainFeeratesTo(swapOutFeerates, accountId) =>
-      account2Connection.get(accountId) foreach { case PeerAndConnection(peer, connection) =>
-        peer ! OutgoingMessage(Codecs toUnknownMessage swapOutFeerates, connection)
-      }
 
     case SwapInProcessor.AccountStatusTo(swapInState, accountId) =>
       // May not be sent back by `swapInProcessor` if account is empty and nothing is happening
@@ -51,8 +45,9 @@ class Worker(db: PostgresProfile.backend.Database, vals: Vals, kit: Kit) extends
 
       Codecs.decode(peerMessage.message) match {
         case Attempt.Successful(SwapInRequest) => swapInProcessor ! SwapInProcessor.SwapInRequestFrom(peerMessage.nodeId.toString)
-        case Attempt.Successful(msg: SwapInWithdrawRequest) => swapInProcessor ! SwapInProcessor.SwapInWithdrawRequestFrom(msg, peerMessage.nodeId.toString)
-        case Attempt.Successful(msg: SwapOutRequest) => swapOutProcessor ! SwapOutProcessor.SwapOutRequestFrom(msg, peerMessage.nodeId.toString)
+        case Attempt.Successful(SwapOutRequest) => swapOutProcessor ! SwapOutProcessor.ChainInfoRequestFrom(peerMessage.nodeId.toString)
+        case Attempt.Successful(msg: SwapInPaymentRequest) => swapInProcessor ! SwapInProcessor.SwapInWithdrawRequestFrom(msg, peerMessage.nodeId.toString)
+        case Attempt.Successful(msg: SwapOutTransactionRequest) => swapOutProcessor ! SwapOutProcessor.SwapOutRequestFrom(msg, peerMessage.nodeId.toString)
         case _: Attempt.Failure => logger.info(s"PLGN ChainSwap, parsing fail, tag=${peerMessage.message.tag}")
         case _ => // Do nothing
       }
@@ -67,7 +62,12 @@ class Worker(db: PostgresProfile.backend.Database, vals: Vals, kit: Kit) extends
     // Either deny right away or silently attempt to fulfill a payment request
     case SwapInProcessor.SwapInWithdrawRequestDeniedTo(paymentRequest, reason, accountId) =>
       account2Connection.get(accountId) foreach { case PeerAndConnection(peer, connection) =>
-        peer ! OutgoingMessage(Codecs toUnknownMessage SwapInWithdrawDenied(paymentRequest, reason), connection)
+        peer ! OutgoingMessage(Codecs toUnknownMessage SwapInPaymentDenied(paymentRequest, reason), connection)
+      }
+
+    case SwapOutProcessor.ChainInfoResponseTo(swapOutFeerates, accountId) =>
+      account2Connection.get(accountId) foreach { case PeerAndConnection(peer, connection) =>
+        peer ! OutgoingMessage(Codecs toUnknownMessage swapOutFeerates, connection)
       }
 
     case SwapOutProcessor.SwapOutResponseTo(swapOutResponse, accountId) =>
@@ -79,7 +79,7 @@ class Worker(db: PostgresProfile.backend.Database, vals: Vals, kit: Kit) extends
     case SwapOutProcessor.SwapOutDeniedTo(btcAddress, reason, accountId) =>
       // Either deny right away or silently send a chain transaction on LN payment
       account2Connection.get(accountId) foreach { case PeerAndConnection(peer, connection) =>
-        peer ! OutgoingMessage(Codecs toUnknownMessage SwapOutDenied(btcAddress, reason), connection)
+        peer ! OutgoingMessage(Codecs toUnknownMessage SwapOutTransactionDenied(btcAddress, reason), connection)
       }
   }
 

@@ -27,27 +27,29 @@ sealed trait SwapIn
 
 case object SwapInRequest extends SwapIn with ChainSwapMessage with IncomingMessage
 
-case class SwapInResponse(btcAddress: String) extends SwapIn with ChainSwapMessage
+case class SwapInResponse(btcAddress: String, minChainDeposit: Satoshi) extends SwapIn with ChainSwapMessage
 
-case class SwapInWithdrawRequest(paymentRequest: String) extends SwapIn with ChainSwapMessage with IncomingMessage
+case class SwapInPaymentRequest(paymentRequest: String) extends SwapIn with ChainSwapMessage with IncomingMessage
 
-case class SwapInWithdrawDenied(paymentRequest: String, reason: String) extends SwapIn with ChainSwapMessage
+case class SwapInPaymentDenied(paymentRequest: String, reason: String) extends SwapIn with ChainSwapMessage
 
-case class PendingDeposit(btcAddress: String, txid: ByteVector32, amount: Satoshi,
-                          stamp: Long = System.currentTimeMillis.milliseconds.toSeconds)
+case class PendingDeposit(btcAddress: String, txid: ByteVector32, amount: Satoshi, stamp: Long = System.currentTimeMillis.milliseconds.toSeconds)
 
-case class SwapInState(balance: MilliSatoshi, maxWithdrawable: MilliSatoshi, activeFeeReserve: MilliSatoshi, inFlightAmount: MilliSatoshi,
-                       pendingChainDeposits: List[PendingDeposit] = Nil) extends SwapIn with ChainSwapMessage
+case class SwapInState(balance: MilliSatoshi, inFlight: MilliSatoshi, pendingChainDeposits: List[PendingDeposit] = Nil) extends SwapIn with ChainSwapMessage
 
 
 sealed trait SwapOut
 
+case object SwapOutRequest extends SwapOut with ChainSwapMessage with IncomingMessage
+
 case class BlockTargetAndFee(blockTarget: Int, fee: Satoshi)
 
-case class SwapOutFeerates(feerates: List[BlockTargetAndFee] = Nil) extends SwapOut with ChainSwapMessage
+case class KeyedBlockTargetAndFee(feerates: List[BlockTargetAndFee], feerateKey: ByteVector32)
 
-case class SwapOutRequest(amount: Satoshi, btcAddress: String, blockTarget: Int) extends SwapOut with ChainSwapMessage with IncomingMessage
+case class SwapOutFeerates(feerates: KeyedBlockTargetAndFee, providerCanHandle: Satoshi, minWithdrawable: Satoshi) extends SwapOut with ChainSwapMessage
 
-case class SwapOutResponse(amount: Satoshi, fee: Satoshi, paymentRequest: String) extends SwapOut with ChainSwapMessage
+case class SwapOutTransactionRequest(amount: Satoshi, btcAddress: String, blockTarget: Int, feerateKey: ByteVector32) extends SwapOut with ChainSwapMessage with IncomingMessage
 
-case class SwapOutDenied(btcAddress: String, reason: String) extends SwapOut with ChainSwapMessage
+case class SwapOutTransactionResponse(paymentRequest: String, amount: Satoshi, fee: Satoshi) extends SwapOut with ChainSwapMessage
+
+case class SwapOutTransactionDenied(btcAddress: String, reason: String) extends SwapOut with ChainSwapMessage

@@ -9,10 +9,9 @@ import scala.util.{Failure, Success, Try}
 import fr.acinq.eclair.{Kit, MilliSatoshi}
 import com.google.common.cache.{CacheLoader, LoadingCache}
 import fr.acinq.eclair.payment.{PaymentFailed, PaymentRequest, PaymentSent}
-import fr.acinq.chainswap.app.dbo.{Account2LNWithdrawals, BTCDeposits, Blocking, Accounts}
-
+import fr.acinq.chainswap.app.db.{Account2LNWithdrawals, BTCDeposits, Blocking, Addresses}
 import fr.acinq.eclair.payment.send.PaymentInitiator.SendPaymentRequest
-import fr.acinq.chainswap.app.dbo.Blocking.askTimeout
+import fr.acinq.chainswap.app.db.Blocking.timeout
 import fr.acinq.eclair.router.RouteCalculation
 import slick.jdbc.PostgresProfile
 import fr.acinq.bitcoin.Satoshi
@@ -30,7 +29,7 @@ object SwapInProcessor {
   case class SwapInRequestFrom(accountId: String)
   case class SwapInResponseTo(response: SwapInResponse, accountId: String)
 
-  case class SwapInWithdrawRequestFrom(request: SwapInWithdrawRequest, accountId: String)
+  case class SwapInWithdrawRequestFrom(request: SwapInPaymentRequest, accountId: String)
   case class SwapInWithdrawRequestDeniedTo(paymentRequest: String, reason: String, accountId: String)
 }
 
@@ -38,18 +37,15 @@ class SwapInProcessor(vals: Vals, kit: Kit, db: PostgresProfile.backend.Database
   context.system.eventStream.subscribe(channel = classOf[PaymentFailed], subscriber = self)
   context.system.eventStream.subscribe(channel = classOf[PaymentSent], subscriber = self)
 
-  type PendingAndReserve = (Long, Long)
-  type PendingWithdrawalsSeq = Seq[PendingAndReserve]
-  type PendingDepositsList = List[PendingDeposit]
-
   val completeDepositSumLoader: CacheLoader[String, Satoshi] =
     new CacheLoader[String, Satoshi] {
       def load(accountId: String): Satoshi = {
         val query = BTCDeposits.findSumCompleteForAccountCompiled(accountId, vals.depthThreshold)
-        Blocking.txRead(query.result, db).map(Satoshi) getOrElse Satoshi(0L)
+        Blocking.txRead(query.result, db).map(Satoshi).getOrElse(0L.sat)
       }
     }
 
+  type PendingDepositsList = List[PendingDeposit]
   val pendingDepositsLoader: CacheLoader[String, PendingDepositsList] =
     new CacheLoader[String, PendingDepositsList] {
       def load(accountId: String): PendingDepositsList = {
@@ -63,42 +59,41 @@ class SwapInProcessor(vals: Vals, kit: Kit, db: PostgresProfile.backend.Database
     new CacheLoader[String, MilliSatoshi] {
       def load(accountId: String): MilliSatoshi = {
         val query = Account2LNWithdrawals.findSuccessfulWithdrawalSumCompiled(accountId)
-        Blocking.txRead(query.result, db).map(MilliSatoshi.apply) getOrElse MilliSatoshi(0L)
+        Blocking.txRead(query.result, db).map(MilliSatoshi.apply).getOrElse(0L.msat)
       }
     }
 
-  val pendingWithdrawalsLoader: CacheLoader[String, PendingWithdrawalsSeq] =
-    new CacheLoader[String, PendingWithdrawalsSeq] {
-      def load(accountId: String): PendingWithdrawalsSeq = {
+  val pendingWithdrawalsLoader: CacheLoader[String, MilliSatoshi] =
+    new CacheLoader[String, MilliSatoshi] {
+      def load(accountId: String): MilliSatoshi = {
         val query = Account2LNWithdrawals.findPendingWithdrawalsByAccountCompiled(accountId)
-        Blocking.txRead(query.result, db)
+        Blocking.txRead(query.result, db).map(MilliSatoshi.apply).getOrElse(0L.msat)
       }
     }
 
-  val completeDepositSum: LoadingCache[String, Satoshi] = Tools.makeExpireAfterAccessCache(1440 * 30).maximumSize(5000000).build(completeDepositSumLoader)
-  val pendingDeposits: LoadingCache[String, PendingDepositsList] = Tools.makeExpireAfterAccessCache(1440 * 30).maximumSize(5000000).build(pendingDepositsLoader)
-  val successfulWithdrawalSum: LoadingCache[String, MilliSatoshi] = Tools.makeExpireAfterAccessCache(1440 * 30).maximumSize(5000000).build(successfulWithdrawalSumLoader)
-  val pendingWithdrawals: LoadingCache[String, PendingWithdrawalsSeq] = Tools.makeExpireAfterAccessCache(1440 * 30).maximumSize(5000000).build(pendingWithdrawalsLoader)
+  val completeDepositSum: LoadingCache[String, Satoshi] = Tools.makeExpireAfterAccessCache(1440 * 60).maximumSize(5000000).build(completeDepositSumLoader)
+  val pendingDeposits: LoadingCache[String, PendingDepositsList] = Tools.makeExpireAfterAccessCache(1440 * 60).maximumSize(5000000).build(pendingDepositsLoader)
+  val successfulWithdrawalSum: LoadingCache[String, MilliSatoshi] = Tools.makeExpireAfterAccessCache(1440 * 60).maximumSize(5000000).build(successfulWithdrawalSumLoader)
+  val pendingWithdrawalSum: LoadingCache[String, MilliSatoshi] = Tools.makeExpireAfterAccessCache(1440 * 60).maximumSize(5000000).build(pendingWithdrawalsLoader)
 
   override def receive: Receive = {
     case AccountStatusFrom(accountId) =>
-      val swapInState = getSwapInState(accountId)
-      val shouldReply: Boolean = isImportant(swapInState)
-      // Do not initiate a wire message if nothing of interest is happening
-      if (shouldReply) context.parent ! AccountStatusTo(swapInState, accountId)
+      val reply @ SwapInState(balance, inFlight, pendingChainDeposits) = getSwapInState(accountId)
+      val shouldReply = balance > 0.msat || inFlight > 0.msat || pendingChainDeposits.nonEmpty
+      if (shouldReply) context.parent ! AccountStatusTo(reply, accountId)
 
     case request @ SwapInRequestFrom(accountId) =>
-      val query = Accounts.findByAccountIdCompiled(accountId)
+      val query = Addresses.findByAccountIdCompiled(accountId)
       val addressOpt = Blocking.txRead(query.result, db).headOption
 
       addressOpt match {
         case Some(btcAddress) =>
-          val response = SwapInResponse(btcAddress)
+          val response = SwapInResponse(btcAddress, vals.minChainDepositSat.sat)
           context.parent ! SwapInResponseTo(response, accountId)
 
         case None =>
           val tuple = (vals.bitcoinAPI.getNewAddress, accountId)
-          Blocking.txWrite(Accounts.insertCompiled += tuple, db)
+          Blocking.txWrite(Addresses.insertCompiled += tuple, db)
           self ! request
       }
 
@@ -114,25 +109,20 @@ class SwapInProcessor(vals: Vals, kit: Kit, db: PostgresProfile.backend.Database
           logger.info(s"PLGN ChainSwap, WithdrawBTCLN, fail=amount-less invoice, account=$accountId")
           context.parent ! SwapInWithdrawRequestDeniedTo(request.paymentRequest, "Invoice should have an amount", accountId)
 
-        case Success(paymentRequest) if paymentRequest.amount.get < MilliSatoshi(vals.lnMinWithdrawMsat) =>
-          logger.info(s"PLGN ChainSwap, WithdrawBTCLN, fail=invoice amount below min ${vals.lnMinWithdrawMsat} msat, account=$accountId")
-          context.parent ! SwapInWithdrawRequestDeniedTo(request.paymentRequest, s"Invoice should have an amount larger than ${vals.lnMinWithdrawMsat} msat", accountId)
-
         case Success(pr) =>
           val finalAmount = pr.amount.get
           val swapInState = getSwapInState(accountId)
 
-          if (finalAmount > swapInState.maxWithdrawable) {
-            logger.info(s"PLGN ChainSwap, WithdrawBTCLN, fail=invoice amount above max withdrawable ${swapInState.maxWithdrawable.truncateToSatoshi.toLong} sat, account=$accountId")
-            context.parent ! SwapInWithdrawRequestDeniedTo(request.paymentRequest, s"Invoice amount should not exceed max withdrawable ${swapInState.maxWithdrawable.truncateToSatoshi.toLong} sat", accountId)
+          if (finalAmount > swapInState.balance) {
+            logger.info(s"PLGN ChainSwap, WithdrawBTCLN, fail=invoice amount above balance ${swapInState.balance.truncateToSatoshi.toLong} sat, account=$accountId")
+            context.parent ! SwapInWithdrawRequestDeniedTo(request.paymentRequest, s"Invoice amount should not exceed balance ${swapInState.balance.truncateToSatoshi.toLong} sat", accountId)
           } else try {
-            val feeReserve = finalAmount * vals.lnMaxFeePct
-            val routeParams = RouteCalculation.getDefaultRouteParams(kit.nodeParams.routerConf).copy(maxFeePct = vals.lnMaxFeePct)
+            val routeParams = RouteCalculation.getDefaultRouteParams(kit.nodeParams.routerConf).copy(maxFeePct = 0D, maxFeeBase = 100L.msat)
             logger.info(s"PLGN ChainSwap, WithdrawBTCLN, validation success, trying to send LN with payment hash=${pr.paymentHash}, amount=${finalAmount.toLong} msat, account=$accountId")
             val spr = SendPaymentRequest(finalAmount, pr.paymentHash, pr.nodeId, kit.nodeParams.maxPaymentAttempts, paymentRequest = Some(pr), routeParams = Some(routeParams), assistedRoutes = pr.routingInfo)
-            val tuple = (accountId, Await.result(kit.paymentInitiator ? spr, Blocking.span).asInstanceOf[UUID].toString, feeReserve.toLong, finalAmount.toLong, System.currentTimeMillis, Account2LNWithdrawals.PENDING)
+            val tuple = (accountId, Await.result(kit.paymentInitiator ? spr, Blocking.span).asInstanceOf[UUID].toString, finalAmount.toLong, System.currentTimeMillis, Account2LNWithdrawals.PENDING)
             Blocking.txWrite(Account2LNWithdrawals.insertCompiled += tuple, db)
-            pendingWithdrawals.invalidate(accountId)
+            pendingWithdrawalSum.invalidate(accountId)
             self ! AccountStatusFrom(accountId)
           } catch {
             case error: Throwable =>
@@ -147,20 +137,16 @@ class SwapInProcessor(vals: Vals, kit: Kit, db: PostgresProfile.backend.Database
 
     case message: PaymentFailed =>
       Blocking.txRead(Account2LNWithdrawals.findAccountByIdCompiled(message.id.toString).result, db) foreach { accountId =>
-        val query = Account2LNWithdrawals.findStatusFeeByIdUpdatableCompiled(message.id.toString)
-        val updateTuple = Tuple2(Account2LNWithdrawals.FAILED, 0L)
-        Blocking.txWrite(query.update(updateTuple), db)
-        pendingWithdrawals.invalidate(accountId)
+        Blocking.txWrite(Account2LNWithdrawals.findStatusByIdUpdatableCompiled(message.id.toString).update(Account2LNWithdrawals.FAILED), db)
+        pendingWithdrawalSum.invalidate(accountId)
         self ! AccountStatusFrom(accountId)
       }
 
     case message: PaymentSent =>
       Blocking.txRead(Account2LNWithdrawals.findAccountByIdCompiled(message.id.toString).result, db) foreach { accountId =>
-        val query = Account2LNWithdrawals.findStatusFeeByIdUpdatableCompiled(message.id.toString)
-        val updateTuple = Tuple2(Account2LNWithdrawals.SUCCEEDED, message.feesPaid.toLong)
-        Blocking.txWrite(query.update(updateTuple), db)
+        Blocking.txWrite(Account2LNWithdrawals.findStatusByIdUpdatableCompiled(message.id.toString).update(Account2LNWithdrawals.SUCCEEDED), db)
         successfulWithdrawalSum.invalidate(accountId)
-        pendingWithdrawals.invalidate(accountId)
+        pendingWithdrawalSum.invalidate(accountId)
         self ! AccountStatusFrom(accountId)
       }
   }
@@ -168,19 +154,10 @@ class SwapInProcessor(vals: Vals, kit: Kit, db: PostgresProfile.backend.Database
   def getSwapInState(accountId: String): SwapInState = {
     val completeDepositSum1 = completeDepositSum.get(accountId)
     val successfulWithdrawalSum1 = successfulWithdrawalSum.get(accountId)
-    val (inFlightPayments, inFlightReserves) = pendingWithdrawals.get(accountId).unzip
+    val pendingWithdrawalSum1 = pendingWithdrawalSum.get(accountId)
     val pendingDeposits1 = pendingDeposits.get(accountId)
 
-    val totalActiveReserve = MilliSatoshi(inFlightReserves.sum)
-    val totalInFlightAmount = MilliSatoshi(inFlightPayments.sum)
-    val maxWithdrawFactor = 100 / (100 + 100 * vals.lnMaxFeePct)
-
-    val balance = completeDepositSum1 - successfulWithdrawalSum1 - totalInFlightAmount - totalActiveReserve
-    SwapInState(balance, balance * maxWithdrawFactor, totalActiveReserve, totalInFlightAmount, pendingDeposits1)
+    val balance = completeDepositSum1 - successfulWithdrawalSum1
+    SwapInState(balance, pendingWithdrawalSum1, pendingDeposits1)
   }
-
-  def isImportant(state: SwapInState): Boolean =
-    state.balance >= vals.lnMinWithdrawMsat.msat ||
-      state.pendingChainDeposits.nonEmpty ||
-      state.inFlightAmount > 0.msat
 }

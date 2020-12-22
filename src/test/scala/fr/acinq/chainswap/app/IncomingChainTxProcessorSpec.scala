@@ -3,11 +3,10 @@ package fr.acinq.chainswap.app
 import akka.actor.{ActorSystem, Props}
 import fr.acinq.bitcoin._
 import slick.jdbc.PostgresProfile.api._
-import fr.acinq.chainswap.app.dbo.{BTCDeposits, Blocking, Accounts}
+import fr.acinq.chainswap.app.db.{BTCDeposits, Blocking, Addresses}
 import fr.acinq.chainswap.app.processor.{IncomingChainTxProcessor, ZMQActor, ZMQActorInit, ZMQListener}
 import org.scalatest.funsuite.AnyFunSuite
 import akka.pattern.ask
-
 import scala.concurrent.Await
 import Blocking._
 import akka.testkit.TestProbe
@@ -15,7 +14,8 @@ import akka.testkit.TestProbe
 
 class IncomingChainTxProcessorSpec extends AnyFunSuite {
 
-  // All these tests require a locally running pg instance
+  // This requires a running bitcoind testnet with balance of 0.1 BTC
+  // This requires a locally running pg instance
 
   test("Database integrity") {
     ChainSwapTestUtils.resetEntireDatabase()
@@ -23,8 +23,8 @@ class IncomingChainTxProcessorSpec extends AnyFunSuite {
 
   test("Removing address-unmatched btc records from db") {
     ChainSwapTestUtils.resetEntireDatabase()
-    Blocking.txWrite(Accounts.insertCompiled += ("btc-address", "account-id-1"), Config.db)
-    Blocking.txWrite(Accounts.insertCompiled += ("not-reverse-matched-btc-address", "account-id-2"), Config.db)
+    Blocking.txWrite(Addresses.insertCompiled += ("btc-address", "account-id-1"), Config.db)
+    Blocking.txWrite(Addresses.insertCompiled += ("not-reverse-matched-btc-address", "account-id-2"), Config.db)
     Blocking.txWrite(BTCDeposits.insert("btc-address", 1L, "txid1", 12D, 0L), Config.db)
     Blocking.txWrite(BTCDeposits.insert("btc-address", 1L, "txid1", 24D, 0L), Config.db)
     Blocking.txWrite(BTCDeposits.insert("not-matched-btc-address", 1L, "txid1", 12D, 0L), Config.db)
@@ -62,7 +62,7 @@ class IncomingChainTxProcessorSpec extends AnyFunSuite {
       "4f062977f425b6ce70a7b08869864c83664fcf60888ac0000000000000000226a2005990528fb62094aed94fa546d1990e8b2b3fb6613fea8aa779819132c5aa82900000000"
     val accountId1 =  "account-id-1"
     val rawAddress1 = "n3RzaNTD8LnBGkREBjSkouy5gmd2dVf7jQ" // 3560000 sat
-    Blocking.txWrite(Accounts.insertCompiled += (rawAddress1, accountId1), Config.db)
+    Blocking.txWrite(Addresses.insertCompiled += (rawAddress1, accountId1), Config.db)
 
     val rawTx2 = "01000000000101b2f18998bf4b8aa19c08c78e160069eae2682753a2b5b0fa784097f4a25a712e0100000023220020016b82e8225c2fe3ee4c61a8660dc63e9cf4b55343fc46536fb212aa76af5cfcfff" +
       "fffff0310270000000000001976a9148eb446f809f526fb37059a32cf8255c4cb43d2da88ac10270000000000001976a9149f9a7abd600c0caa03983a77c8c3df8e062cb2fa88ac8d618c000000000017a914763943a" +
@@ -72,7 +72,7 @@ class IncomingChainTxProcessorSpec extends AnyFunSuite {
       "d7bee2740928862cad353ae00000000"
     val accountId2 =  "account-id-2"
     val rawAddress2 = "mv4rnyY3Su5gjcDNzbMLKBQkBicCtHUtFB" // 10000 sat, but THIS UTXO IS NOT PRESENT ANYMORE (as if it was thrown out of mempool after pending long enough)
-    Blocking.txWrite(Accounts.insertCompiled += (rawAddress2, accountId2), Config.db)
+    Blocking.txWrite(Addresses.insertCompiled += (rawAddress2, accountId2), Config.db)
     val listener = Await.result(incomingChainTxProcessor ? Symbol("processor"), Blocking.span).asInstanceOf[ZMQListener]
 
     incomingChainTxProcessor ! AccountAndAddress(accountId1, rawAddress1)
