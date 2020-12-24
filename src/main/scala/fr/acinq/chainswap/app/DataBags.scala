@@ -1,7 +1,6 @@
 package fr.acinq.chainswap.app
 
 import fr.acinq.bitcoin.{ByteVector32, Satoshi}
-import fr.acinq.chainswap.app.db.Blocking.LNPaymentId
 import akka.actor.ActorRef
 
 
@@ -32,7 +31,7 @@ object SwapInPaymentDenied {
 
 case class SwapInPaymentDenied(paymentRequest: String, reason: Long) extends SwapIn with ChainSwapMessage
 
-case class ChainDeposit(id: Long, lnPaymentId: LNPaymentId, lnStatus: Long, btcAddress: String, outIndex: Long, txid: String, amountSat: Long, depth: Long, stamp: Long)
+case class ChainDeposit(id: Long, lnPaymentId: Option[String], lnStatus: Long, btcAddress: String, outIndex: Long, txid: String, amountSat: Long, depth: Long, stamp: Long)
 
 case class SwapInState(pending: List[ChainDeposit], ready: List[ChainDeposit], processing: List[ChainDeposit] = Nil) extends SwapIn with ChainSwapMessage
 

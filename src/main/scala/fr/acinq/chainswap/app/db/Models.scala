@@ -15,7 +15,6 @@ object Blocking {
   type RepInt = Rep[Int]
   type RepLong = Rep[Long]
   type RepString = Rep[String]
-  type LNPaymentId = Option[String]
 
   val span: FiniteDuration = 25.seconds
   implicit val timeout: Timeout = Timeout(span)
@@ -61,7 +60,7 @@ object BTCDeposits {
   final val LN_SUCCEEDED = 2L
   final val LN_UNCLAIMED = 3L
 
-  type DbType = (Long, LNPaymentId, Long, String, Long, String, Long, Long, Long)
+  type DbType = (Long, Option[String], Long, String, Long, String, Long, Long, Long)
   private def findDepthUpdatableById(id: RepLong) = model.filter(_.id === id).map(_.depth)
   private def findAllWaiting(threshold: RepLong, limit: RepLong) = model.filter(x => x.depth < threshold && x.stamp > limit)
 
@@ -100,7 +99,7 @@ object BTCDeposits {
 
 class BTCDeposits(tag: Tag) extends Table[BTCDeposits.DbType](tag, BTCDeposits.tableName) {
   def id: Rep[Long] = column[Long]("id", O.PrimaryKey, O.AutoInc)
-  def lnPaymentId: Rep[LNPaymentId] = column[LNPaymentId]("ln_payment_id")
+  def lnPaymentId: Rep[Option[String]] = column[Option[String]]("ln_payment_id")
   def lnStatus: Rep[Long] = column[Long]("ln_status")
 
   def btcAddress: Rep[String] = column[String]("btc_address")

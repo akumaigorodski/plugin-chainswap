@@ -119,7 +119,7 @@ class SwapInProcessor(vals: Vals, kit: Kit, db: PostgresProfile.backend.Database
 
             case None =>
               logger.info(s"PLGN ChainSwap, WithdrawBTCLN, fail=no withdrawable tx found, id=${request.id}, account=$accountId")
-              context.parent ! SwapInWithdrawRequestDeniedTo(request.paymentRequest, SwapInPaymentDenied.NO_WITHDRAWABLE_TX_FOUND, accountId)
+              context.parent ! SwapInWithdrawRequestDeniedTo(request.paymentRequest, SwapInPaymentDenied.NO_WITHDRAWABLE_TX, accountId)
           }
 
         case Failure(error) =>
