@@ -1,9 +1,7 @@
 package fr.acinq.chainswap.app
 
-import fr.acinq.eclair._
-import scala.concurrent.duration._
 import fr.acinq.bitcoin.{ByteVector32, Satoshi}
-import scodec.bits.ByteVector
+import fr.acinq.chainswap.app.db.Blocking.LNPaymentId
 import akka.actor.ActorRef
 
 
@@ -11,11 +9,7 @@ case class PeerAndConnection(peer: ActorRef, connection: ActorRef)
 
 case class AccountAndAddress(accountId: String, btcAddress: String)
 
-case class ChainDepositReceived(accountId: String, amount: Satoshi, txid: String, depth: Long)
-
-case class BTCDeposit(id: Long, btcAddress: String, outIndex: Long, txid: String, amount: Long, depth: Long, stamp: Long) {
-  def toPendingDeposit: PendingDeposit = PendingDeposit(btcAddress, ByteVector32(ByteVector fromValidHex txid), Satoshi(amount), stamp)
-}
+case class ChainDepositReceived(accountId: String, txid: String, amountSat: Long, depth: Long)
 
 // Protocol messages
 
@@ -27,13 +21,20 @@ case object SwapInRequest extends SwapIn with ChainSwapMessage
 
 case class SwapInResponse(btcAddress: String, minChainDeposit: Satoshi) extends SwapIn with ChainSwapMessage
 
-case class SwapInPaymentRequest(paymentRequest: String) extends SwapIn with ChainSwapMessage
+case class SwapInPaymentRequest(paymentRequest: String, id: Long) extends SwapIn with ChainSwapMessage
 
-case class SwapInPaymentDenied(paymentRequest: String, reason: String) extends SwapIn with ChainSwapMessage
+object SwapInPaymentDenied {
+  final val WITHDRAWAL_ALREADY_IN_FLIGHT = 1L
+  final val INVOICE_TX_AMOUNT_MISMATCH = 2L
+  final val NO_WITHDRAWABLE_TX_FOUND = 3L
+  final val INVALID_INVOICE = 4L
+}
 
-case class PendingDeposit(btcAddress: String, txid: ByteVector32, amount: Satoshi, stamp: Long)
+case class SwapInPaymentDenied(paymentRequest: String, reason: Long) extends SwapIn with ChainSwapMessage
 
-case class SwapInState(balance: MilliSatoshi, inFlight: MilliSatoshi, pendingChainDeposits: List[PendingDeposit] = Nil) extends SwapIn with ChainSwapMessage
+case class ChainDeposit(id: Long, lnPaymentId: LNPaymentId, lnStatus: Long, btcAddress: String, outIndex: Long, txid: String, amountSat: Long, depth: Long, stamp: Long)
+
+case class SwapInState(pending: List[ChainDeposit], ready: List[ChainDeposit], processing: List[ChainDeposit] = Nil) extends SwapIn with ChainSwapMessage
 
 sealed trait SwapOut
 

@@ -43,7 +43,7 @@ class SwapInProcessorSpec extends AnyFunSuite {
     val userId = "user-id-1"
 
     swapInProcessor ! SwapInProcessor.AccountStatusFrom(userId)
-    eventListener.expectNoMessage() // Nothing interesting is happening
+    val SwapInState(Nil, Nil, Nil) = eventListener.expectMsgType[SwapInProcessor.AccountStatusTo].state // We always send this message
 
     val rawTx1ConfirmedAtBlock = 1720707
     val rawTx1 = "0100000001d2ecbeeee1e307835be483f1c2c5671f1a107e10e07da84ab27e6957d3a283e5000000006b483045022100deee31270085e1ea00f6872f489c552e8c8ba5351433a070b51db382abfdfcd9" +
@@ -56,46 +56,63 @@ class SwapInProcessorSpec extends AnyFunSuite {
     incomingChainTxProcessor ! AccountAndAddress(userId, rawAddress1) // User asks for address, make incomingChainTxProcessor expect a mempool tx
     synchronized(wait(100))
 
-    listener.onNewTx(Transaction.read(rawTx1)) // get an incoming tx
-    assert(eventListener.expectMsgType[SwapInProcessor.AccountStatusTo].state.pendingChainDeposits.size === 1)
+    val tx = Transaction.read(rawTx1)
+    listener.onNewTx(tx) // get an incoming tx
+    val SwapInState(List(deposit), Nil, Nil) = eventListener.expectMsgType[SwapInProcessor.AccountStatusTo].state
+    assert(deposit.txid == tx.txid.toHex)
 
     val oneMilSat = "lntb10m1p0cqg40rzjqges6y6c0dn6shq2xm4qq8zdhg2te4ydm2yc3aesxf6mqs9lld4t6q3xghlyujw62cqqqqlgqqqqqeqqjqdqqcqzgapp5e46hd8z4dwh9z6t8uecls9phc9txdkvym52qc4syz7qs5" +
       "3r5sspsxqyz5vp8xmsusrvjuqt4knl64s437txwnkrhexa2zs7arm9z0zujwlsd26sh6dy6p3kyfjkjrm0hg2jg43eaccfeut8cm26e36vchhwc7f8g3spev5720"
 
-    swapInProcessor ! SwapInProcessor.SwapInWithdrawRequestFrom(SwapInPaymentRequest(oneMilSat), userId)
-    eventListener.expectMsgType[SwapInProcessor.SwapInWithdrawRequestDeniedTo] // More than can be withdrawn
+    swapInProcessor ! SwapInProcessor.SwapInWithdrawRequestFrom(SwapInPaymentRequest(oneMilSat, id = deposit.id), userId)
+    assert(eventListener.expectMsgType[SwapInProcessor.SwapInWithdrawRequestDeniedTo].reason == SwapInPaymentDenied.NO_WITHDRAWABLE_TX_FOUND)
 
     listener.onNewBlock(Config.vals.bitcoinAPI.getBlock(rawTx1ConfirmedAtBlock)) // get that tx confirmed, incomingChainTxProcessor sends a message to swapInProcessor
-    assert(eventListener.expectMsgType[SwapInProcessor.AccountStatusTo].state === SwapInState(3560000000L.msat, 0L.msat, Nil)) // swapInProcessor in turn informs parent about updated account status
+    val SwapInState(Nil, List(deposit1), Nil) = eventListener.expectMsgType[SwapInProcessor.AccountStatusTo].state // swapInProcessor in turn informs parent about updated account status
+    assert(deposit1.txid == tx.txid.toHex && deposit1.amountSat == 3560000L)
 
-    val tooSmallPr = "lntb1p07yq02pp5e2x2qsha0wm8ndqe3v0xt9sgzv9c6suzeehh4p2uprplvflumftsdqqxqrrsscqp79qy9qsqsp5ysruu5npml3m9sx3l8t7twyek2ehac" +
+    val amountLessPr = "lntb1p07yq02pp5e2x2qsha0wm8ndqe3v0xt9sgzv9c6suzeehh4p2uprplvflumftsdqqxqrrsscqp79qy9qsqsp5ysruu5npml3m9sx3l8t7twyek2ehac" +
       "zctjc64pm8ey3zyg605r3q72kjgftc6f8998wyhmhq2edr0mju9jq97nhyftjc9d8kej7g05apsl5xw7ruqmp65c8cwh38xrugh6cpc9q3mqyn4a7ed4jf0e9smnspnlq6qh"
 
-    swapInProcessor ! SwapInProcessor.SwapInWithdrawRequestFrom(SwapInPaymentRequest(tooSmallPr), userId)
-    eventListener.expectMsgType[SwapInProcessor.SwapInWithdrawRequestDeniedTo] // Too small withdraw amount
+    swapInProcessor ! SwapInProcessor.SwapInWithdrawRequestFrom(SwapInPaymentRequest(amountLessPr, id = deposit.id), userId)
+    assert(eventListener.expectMsgType[SwapInProcessor.SwapInWithdrawRequestDeniedTo].reason == SwapInPaymentDenied.INVOICE_TX_AMOUNT_MISMATCH)
 
-    swapInProcessor ! SwapInProcessor.SwapInWithdrawRequestFrom(SwapInPaymentRequest(oneMilSat), userId)
+    swapInProcessor ! SwapInProcessor.SwapInWithdrawRequestFrom(SwapInPaymentRequest(oneMilSat, id = 2), userId) // Non-existing txid
+    assert(eventListener.expectMsgType[SwapInProcessor.SwapInWithdrawRequestDeniedTo].reason == SwapInPaymentDenied.NO_WITHDRAWABLE_TX_FOUND)
+
+    swapInProcessor ! SwapInProcessor.SwapInWithdrawRequestFrom(SwapInPaymentRequest(oneMilSat, id = deposit.id), "user-id-2") // Different user id
+    assert(eventListener.expectMsgType[SwapInProcessor.SwapInWithdrawRequestDeniedTo].reason == SwapInPaymentDenied.NO_WITHDRAWABLE_TX_FOUND)
+
+    val exactAmountPr = "lntb35600u1p07fvlrpp5zlvgze2kh942uej28pa0zxsyf5tgfu3pt99g3yfe42mqe2frq9hsdqqxqrrsscqp79qy9qsqsp5vhgf96k9vc99ej6ac" +
+      "hdezjthup3sk0kx93tuykwy56wg0s2nvzfsr8vkm80taak7q3zxwqy4r77eyrqldwu9qhhywzna28jr5lkg00gkd9jyl9x73aw6zal3mpdlt0x5qmtnexptvxclh3fn2uyukqs02tspga3m5v"
+
+    swapInProcessor ! SwapInProcessor.SwapInWithdrawRequestFrom(SwapInPaymentRequest(exactAmountPr, id = deposit.id), userId)
     val paymentId1 = eventListener.expectMsgType[UUID]
-    assert(eventListener.expectMsgType[SwapInProcessor.AccountStatusTo].state === SwapInState(3560000000L.msat, 1000000000L.msat, Nil)) // 1 payment in-flight
+    val SwapInState(Nil, List(deposit2), List(deposit3)) = eventListener.expectMsgType[SwapInProcessor.AccountStatusTo].state
+    assert(deposit2.txid == tx.txid.toHex && deposit2.amountSat == 3560000L && deposit2 == deposit3)
 
-    val exactRemaining = "lntb25600u1p07yqk8pp5pk9578ct3wuswqwyvdz6wdstpvm7tq4vu54hhlhpv9xeeqhdynfsdqqxqrrsscqp79qy9qsqsp53rz94y3tgjvahf07yqwhq" +
-      "vzftjx3nt5h8t484cnlpntaz6paeq8qqan5ezhsxy0mwevk3vdrky9xcjpfppmc9qsn7alnhqqxp6uwkzfpestm7duun7ktjc60n86gwg68wdsalkngtn6erwujyk6wq4yd02cpmyaa9s"
+    val exactAmountPr2 = "lntb35600u1p07fd9epp559x2xsd9zy78duaepzdhwsuaulkvf7ngy7xas324ey3r3k2rescqdqqxqrrsscqp79qy9qsqsp5wzuw82zdt6ledswwq0249l7uc7lvyh6er07z9n" +
+      "2hn4apz8u9ckzs60n0q6dwkf7n6f8myut8m4eaezugl7npdsc7fhq570265n2kn9k4ffct7tvy7rxtdtwta2v36heq3tcrln2m5afxkac9x0dd9xejwwqq5dknl3"
 
-    swapInProcessor ! SwapInProcessor.SwapInWithdrawRequestFrom(SwapInPaymentRequest(exactRemaining), userId)
+    swapInProcessor ! SwapInProcessor.SwapInWithdrawRequestFrom(SwapInPaymentRequest(exactAmountPr2, id = deposit.id), userId) // User tries to withdraw the same tx for the second time
+    assert(eventListener.expectMsgType[SwapInProcessor.SwapInWithdrawRequestDeniedTo].reason == SwapInPaymentDenied.WITHDRAWAL_ALREADY_IN_FLIGHT)
+
+    system.eventStream.publish(PaymentFailed(paymentId1, ByteVector32.One, Nil)) // Payment has failed
+    val SwapInState(Nil, List(deposit4), Nil) = eventListener.expectMsgType[SwapInProcessor.AccountStatusTo].state // swapInProcessor in turn informs parent about updated account status
+    assert(deposit4.txid == tx.txid.toHex && deposit4.amountSat == 3560000L)
+
+    swapInProcessor ! SwapInProcessor.SwapInWithdrawRequestFrom(SwapInPaymentRequest(exactAmountPr2, id = deposit.id), userId) // User tries to withdraw the same tx for the second time
     val paymentId2 = eventListener.expectMsgType[UUID]
-    assert(eventListener.expectMsgType[SwapInProcessor.AccountStatusTo].state === SwapInState(3560000000L.msat, 3560000000L.msat, Nil)) // 2 payments in-flight, whole balance is used
+    val SwapInState(Nil, List(deposit5), List(deposit6)) = eventListener.expectMsgType[SwapInProcessor.AccountStatusTo].state
+    assert(deposit5.txid == tx.txid.toHex && deposit5.amountSat == 3560000L && deposit5 == deposit6)
 
-    system.eventStream.publish(PaymentFailed(paymentId1, ByteVector32.One, Nil))
-    assert(eventListener.expectMsgType[SwapInProcessor.AccountStatusTo].state === SwapInState(3560000000L.msat, 2560000000L.msat, Nil)) // 1st payment failed, 1 left
-
-    val pp = PartialPayment(UUID.randomUUID(), 2560000000L.msat, 10000L.msat, null, None)
-    system.eventStream.publish(PaymentSent(paymentId2, ByteVector32.One, ByteVector32.Zeroes, 2560000000L.msat, null, Seq(pp)))
-    val finalExpectedState = SwapInState(1000000000L.msat, 0L.msat, Nil)
-    assert(eventListener.expectMsgType[SwapInProcessor.AccountStatusTo].state === finalExpectedState) // 2nd payment fulfilled, none left in-flight
+    val pp = PartialPayment(UUID.randomUUID(), 3560000000L.msat, 10000L.msat, null, None) // Fulfilled for the second time
+    system.eventStream.publish(PaymentSent(paymentId2, ByteVector32.One, ByteVector32.Zeroes, 3560000000L.msat, null, Seq(pp)))
+    val SwapInState(Nil, Nil, Nil) = eventListener.expectMsgType[SwapInProcessor.AccountStatusTo].state // swapInProcessor in turn informs parent about updated account status
 
     // Simulate restart, cache has been emptied
     val swapInProcessor2 = eventListener childActorOf Props(classOf[SwapInProcessor], Config.vals, kit, Config.db)
     swapInProcessor2 ! SwapInProcessor.AccountStatusFrom(userId)
-    assert(eventListener.expectMsgType[SwapInProcessor.AccountStatusTo].state === finalExpectedState)
+    val SwapInState(Nil, Nil, Nil) = eventListener.expectMsgType[SwapInProcessor.AccountStatusTo].state
   }
 }

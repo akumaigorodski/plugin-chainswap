@@ -2,21 +2,22 @@ package fr.acinq.chainswap.app.processor
 
 import fr.acinq.bitcoin._
 import slick.jdbc.PostgresProfile.api._
+
 import scala.jdk.CollectionConverters._
 import scala.collection.parallel.CollectionConverters._
-
 import akka.actor.{Actor, ActorRef}
-import fr.acinq.chainswap.app.db.{BTCDeposits, Blocking, Addresses}
-import fr.acinq.chainswap.app.{BTCDeposit, ChainDepositReceived, Tools, AccountAndAddress, Vals}
+import fr.acinq.chainswap.app.db.{Addresses, BTCDeposits, Blocking}
+import fr.acinq.chainswap.app.{AccountAndAddress, ChainDeposit, ChainDepositReceived, Tools, Vals}
 import wf.bitcoin.javabitcoindrpcclient.BitcoindRpcClient.Block
 import com.google.common.cache.Cache
 import slick.jdbc.PostgresProfile
 import grizzled.slf4j.Logging
 import scodec.bits.ByteVector
+
 import scala.util.Try
 
 
-class IncomingChainTxProcessor(vals: Vals, swapInProcessor: ActorRef, zmq: ActorRef, db: PostgresProfile.backend.Database) extends Actor with Logging { me =>
+class IncomingChainTxProcessor(vals: Vals, swapInProcessor: ActorRef, zmq: ActorRef, db: PostgresProfile.backend.Database) extends Actor with Logging {
   val processedBlocks: Cache[java.lang.Integer, java.lang.Long] = Tools.makeExpireAfterAccessCache(1440 * 60).maximumSize(1000000).build[java.lang.Integer, java.lang.Long]
   val recentRequests: Cache[ByteVector, AccountAndAddress] = Tools.makeExpireAfterAccessCache(1440).maximumSize(5000000).build[ByteVector, AccountAndAddress]
 
@@ -27,12 +28,14 @@ class IncomingChainTxProcessor(vals: Vals, swapInProcessor: ActorRef, zmq: Actor
       if amount.toLong >= vals.minChainDepositSat
 
       txid = tx.txid.toHex
+      // We only insert an unconfirmed tx into db if we can find an accountId which has requested it recently
       _ = Blocking.txWrite(BTCDeposits.insert(btcAddress, outIdx.toLong, txid, amount.toLong, 0L), db)
-    } swapInProcessor ! ChainDepositReceived(accountId, amount, txid, depth = 0L)
+    } swapInProcessor ! ChainDepositReceived(accountId, txid, amount.toLong, depth = 0L)
 
-    override def onNewBlock(block: Block): Unit =
-      if (Option(processedBlocks getIfPresent block.height).isEmpty)
-        processBlock(block)
+    override def onNewBlock(block: Block): Unit = {
+      val alreadyProcessed = Option(processedBlocks getIfPresent block.height)
+      if (alreadyProcessed.isEmpty) processBlock(block)
+    }
 
     private def processBlock(block: Block): Unit = {
       // 1. Obtain address/outIndex/txid tuples from each tx
@@ -47,9 +50,8 @@ class IncomingChainTxProcessor(vals: Vals, swapInProcessor: ActorRef, zmq: Actor
         List(OP_DUP, OP_HASH160, OP_PUSHDATA(hash, _), OP_EQUALVERIFY, OP_CHECKSIG) <- parse(pubKeyScript)
         if amount.toLong >= vals.minChainDepositSat && 20 == hash.size
 
-        txid = transaction.txid.toHex
         btcAddress = Base58Check.encode(vals.addressPrefix, hash)
-      } yield BTCDeposits.insert(btcAddress, outIdx.toLong, txid, amount.toLong, 1L)
+      } yield BTCDeposits.insert(btcAddress, outIdx.toLong, transaction.txid.toHex, amount.toLong, 1L)
 
       // Insert new records, ignore duplicates
       Blocking.txWrite(DBIO.sequence(refreshes.toVector), db)
@@ -62,14 +64,14 @@ class IncomingChainTxProcessor(vals: Vals, swapInProcessor: ActorRef, zmq: Actor
       val pending = BTCDeposits.findAllWaitingCompiled(vals.depthThreshold, lookBackPeriod)
 
       for {
-        btcDeposit <- Blocking.txRead(pending.result, db).map(BTCDeposit.tupled).par
+        chainDeposit <- Blocking.txRead(pending.result, db).map(ChainDeposit.tupled).par
         // Relies on deposit still pending in our db, but having enough confs in bitcoind
-        depth <- getConfs(btcDeposit.txid, btcDeposit.outIndex) if depth >= vals.depthThreshold
-        _ = Blocking.txWrite(BTCDeposits.findAllDepthUpdatableCompiled(btcDeposit.id).update(depth), db)
-        accountId <- Blocking.txRead(Addresses.findByBtcAddressCompiled(btcDeposit.btcAddress).result, db)
-        // To increase user privacy we add a new address on each successful deposit, old addresses stay valid
+        depth <- getConfs(chainDeposit.txid, chainDeposit.outIndex) if depth >= vals.depthThreshold
+        _ = Blocking.txWrite(BTCDeposits.findDepthUpdatableByIdCompiled(chainDeposit.id).update(depth), db)
+        accountId <- Blocking.txRead(Addresses.findByBtcAddressCompiled(chainDeposit.btcAddress).result.headOption, db)
+        // To increase user privacy we add a new Bitcoin address on each successful deposit, old addresses stay valid
         _ = Blocking.txWrite(Addresses.insertCompiled += (vals.bitcoinAPI.getNewAddress, accountId), db)
-        reply = ChainDepositReceived(accountId, Satoshi(btcDeposit.amount), btcDeposit.txid, depth)
+        reply = ChainDepositReceived(accountId, chainDeposit.txid, chainDeposit.amountSat, depth)
       } swapInProcessor ! reply
 
       // Prevent this block from being processed twice

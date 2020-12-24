@@ -15,6 +15,7 @@ object Blocking {
   type RepInt = Rep[Int]
   type RepLong = Rep[Long]
   type RepString = Rep[String]
+  type LNPaymentId = Option[String]
 
   val span: FiniteDuration = 25.seconds
   implicit val timeout: Timeout = Timeout(span)
@@ -22,7 +23,7 @@ object Blocking {
   def txWrite[T](act: DBIOAction[T, NoStream, Effect.Write], db: Database): T = Await.result(db.run(act.transactionally), span)
 
   def createTablesIfNotExist(db: Database): Unit = {
-    val tables = Seq(Addresses.model, BTCDeposits.model, Account2LNWithdrawals.model).map(_.schema.createIfNotExists)
+    val tables = Seq(Addresses.model, BTCDeposits.model).map(_.schema.createIfNotExists)
     Await.result(db.run(DBIO.sequence(tables).transactionally), span)
   }
 }
@@ -46,6 +47,7 @@ class Addresses(tag: Tag) extends Table[Addresses.DbType](tag, Addresses.tableNa
   def btcAddress: Rep[String] = column[String]("btc_address", O.Unique)
   def accountId: Rep[String] = column[String]("account_id")
 
+  // Same accountId may have multiple unique Bitcoin addresses, hence index is not unique
   def accountIdIdx: Index = index(s"${tableName}__account_id__idx", accountId, unique = false)
   def * = (id, btcAddress, accountId)
 }
@@ -55,28 +57,52 @@ object BTCDeposits {
   final val tableName = "btc_deposits"
   val model = TableQuery[BTCDeposits]
 
-  type DbType = (Long, String, Long, String, Long, Long, Long)
+  final val LN_IN_FLIGHT = 1L
+  final val LN_SUCCEEDED = 2L
+  final val LN_UNCLAIMED = 3L
+
+  type DbType = (Long, LNPaymentId, Long, String, Long, String, Long, Long, Long)
+  private def findDepthUpdatableById(id: RepLong) = model.filter(_.id === id).map(_.depth)
   private def findAllWaiting(threshold: RepLong, limit: RepLong) = model.filter(x => x.depth < threshold && x.stamp > limit)
-  private def findAllDepthUpdatable(id: RepLong) = model.filter(_.id === id).map(_.depth)
 
   private def findFor(accountId: RepString) = Addresses.model.filter(_.accountId === accountId).join(BTCDeposits.model).on(_.btcAddress === _.btcAddress).map(_._2)
-  private def findWaitingForAccount(accountId: RepString, threshold: RepLong, limit: RepLong) = findFor(accountId).filter(deposit => deposit.depth < threshold && deposit.stamp > limit)
-  private def findSumCompleteForAccount(accountId: RepString, threshold: RepLong) = findFor(accountId).filter(_.depth >= threshold).map(_.sat).sum
+  private def findWaitingForAccount(accountId: RepString, threshold: RepLong, limit: RepLong) = findFor(accountId).filter(x => x.depth < threshold && x.stamp > limit)
+  private def findWithdrawableForAccount(accountId: RepString, threshold: RepLong) = findFor(accountId).filter(x => x.depth >= threshold && x.stamp > 0L && x.lnStatus =!= LN_SUCCEEDED)
+  private def findInFlightForAccount(accountId: RepString, threshold: RepLong) = findFor(accountId).filter(x => x.depth >= threshold && x.stamp > 0L && x.lnStatus === LN_IN_FLIGHT)
 
-  def clearUp = sqlu"DELETE FROM #${BTCDeposits.tableName} deposits WHERE NOT EXISTS (SELECT * FROM #${Addresses.tableName} accounts WHERE deposits.btc_address = accounts.btc_address)"
+  private def findLNUpdatableById(id: RepLong) = model.filter(_.id === id).map(x => x.lnPaymentId -> x.lnStatus)
+  private def findLNUpdatableByPaymentId(paymentId: RepString) = model.filter(_.lnPaymentId === paymentId).map(x => x.lnPaymentId -> x.lnStatus)
+  private def findAccountIdByPaymentId(paymentId: RepString) = BTCDeposits.model.filter(_.lnPaymentId === paymentId).join(Addresses.model).on(_.btcAddress === _.btcAddress).map(_._2.accountId)
 
+  def clearUp = sqlu"""
+    DELETE FROM #${BTCDeposits.tableName} deposits WHERE NOT EXISTS
+    (SELECT * FROM #${Addresses.tableName} accounts WHERE deposits.btc_address = accounts.btc_address)
+  """
+
+  val noId = Option.empty[String]
   // Insert which silently ignores duplicate records
-  def insert(btcAddress: String, outIdx: Long, txid: String, sat: Double, depth: Long, stamp: Long = System.currentTimeMillis) =
-    sqlu"INSERT INTO #${BTCDeposits.tableName} (btc_address, out_index, txid, sat, depth, stamp) VALUES ($btcAddress, $outIdx, $txid, $sat, $depth, $stamp) ON CONFLICT DO NOTHING"
+  def insert(btcAddress: String, outIdx: Long, txid: String, sat: Long, depth: Long, stamp: Long = System.currentTimeMillis) = sqlu"""
+    INSERT INTO #${BTCDeposits.tableName} (ln_payment_id, ln_status, btc_address, out_index, txid, sat, depth, stamp)
+    VALUES ($noId, $LN_UNCLAIMED, $btcAddress, $outIdx, $txid, $sat, $depth, $stamp) ON CONFLICT DO NOTHING
+  """
 
-  val findSumCompleteForAccountCompiled = Compiled(findSumCompleteForAccount _)
-  val findAllDepthUpdatableCompiled = Compiled(findAllDepthUpdatable _)
-  val findWaitingForAccountCompiled = Compiled(findWaitingForAccount _)
+  val findDepthUpdatableByIdCompiled = Compiled(findDepthUpdatableById _)
   val findAllWaitingCompiled = Compiled(findAllWaiting _)
+
+  val findWaitingForAccountCompiled = Compiled(findWaitingForAccount _)
+  val findWithdrawableForAccountCompiled = Compiled(findWithdrawableForAccount _)
+  val findInFlightForAccountCompiled = Compiled(findInFlightForAccount _)
+
+  val findLNUpdatableByIdCompiled = Compiled(findLNUpdatableById _)
+  val findLNUpdatableByPaymentIdCompiled = Compiled(findLNUpdatableByPaymentId _)
+  val findAccountIdByPaymentIdCompiled = Compiled(findAccountIdByPaymentId _)
 }
 
 class BTCDeposits(tag: Tag) extends Table[BTCDeposits.DbType](tag, BTCDeposits.tableName) {
   def id: Rep[Long] = column[Long]("id", O.PrimaryKey, O.AutoInc)
+  def lnPaymentId: Rep[LNPaymentId] = column[LNPaymentId]("ln_payment_id")
+  def lnStatus: Rep[Long] = column[Long]("ln_status")
+
   def btcAddress: Rep[String] = column[String]("btc_address")
   def outIndex: Rep[Long] = column[Long]("out_index")
   def txid: Rep[String] = column[String]("txid")
@@ -86,40 +112,7 @@ class BTCDeposits(tag: Tag) extends Table[BTCDeposits.DbType](tag, BTCDeposits.t
 
   // We need this index to prevent double insertion (and double deposit) for txs which are seen in mempool first and then in a block
   def btcAddressOutIndexTxidIdx: Index = index("btc_deposits__btc_address__out_index__txid__idx", (btcAddress, outIndex, txid), unique = true)
-  def depthStampIdx: Index = index("btc_deposits__depth__stamp__idx", (depth, stamp), unique = false)
-  def * = (id, btcAddress, outIndex, txid, sat, depth, stamp)
-}
-
-
-object Account2LNWithdrawals {
-  val model = TableQuery[Account2LNWithdrawals]
-
-  final val PENDING = 1L
-  final val SUCCEEDED = 2L
-  final val FAILED = 3L
-
-  type DbType = (Long, String, String, Long, Long, Long)
-  private val insert = for (x <- model) yield (x.accountId, x.paymentId, x.paymentMsat, x.stamp, x.status)
-  private def findStatusByIdUpdatable(paymentId: RepString) = model.filter(x => x.paymentId === paymentId).map(_.status)
-  private def findSuccessfulWithdrawalSum(accountId: RepString) = model.filter(x => x.status === SUCCEEDED && x.accountId === accountId).map(_.paymentMsat).sum
-  private def findPendingWithdrawalsByAccount(accountId: RepString) = model.filter(x => x.status === PENDING && x.accountId === accountId).map(_.paymentMsat).sum
-  private def findAccountById(paymentId: RepString) = model.filter(_.paymentId === paymentId).map(_.accountId)
-
-  val insertCompiled = Compiled(insert)
-  val findStatusByIdUpdatableCompiled = Compiled(findStatusByIdUpdatable _)
-  val findSuccessfulWithdrawalSumCompiled = Compiled(findSuccessfulWithdrawalSum _)
-  val findPendingWithdrawalsByAccountCompiled = Compiled(findPendingWithdrawalsByAccount _)
-  val findAccountByIdCompiled = Compiled(findAccountById _)
-}
-
-class Account2LNWithdrawals(tag: Tag) extends Table[Account2LNWithdrawals.DbType](tag, "account_ln_withdrawals") {
-  def id: Rep[Long] = column[Long]("id", O.PrimaryKey, O.AutoInc)
-  def accountId: Rep[String] = column[String]("account_id")
-  def paymentId: Rep[String] = column[String]("payment_id", O.Unique)
-  def paymentMsat: Rep[Long] = column[Long]("payment_msat")
-  def stamp: Rep[Long] = column[Long]("stamp")
-  def status: Rep[Long] = column[Long]("status")
-
-  def statusAccountIdIdx: Index = index("account_ln_withdrawals__status__account_id__idx", (status, accountId), unique = false)
-  def * = (id, accountId, paymentId, paymentMsat, stamp, status)
+  def depthStampLnStatusIdx: Index = index("btc_deposits__depth__stamp__ln_status__idx", (depth, stamp, lnStatus), unique = false)
+  def paymentIdIdx: Index = index("btc_deposits__ln_payment_id__idx", lnPaymentId, unique = false)
+  def * = (id, lnPaymentId, lnStatus, btcAddress, outIndex, txid, sat, depth, stamp)
 }

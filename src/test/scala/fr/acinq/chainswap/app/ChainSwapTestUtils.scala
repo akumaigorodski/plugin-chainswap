@@ -17,10 +17,8 @@ object ChainSwapTestUtils {
     val setup = DBIO.seq(
       fr.acinq.chainswap.app.db.Addresses.model.schema.dropIfExists,
       fr.acinq.chainswap.app.db.BTCDeposits.model.schema.dropIfExists,
-      fr.acinq.chainswap.app.db.Account2LNWithdrawals.model.schema.dropIfExists,
       fr.acinq.chainswap.app.db.Addresses.model.schema.create,
       fr.acinq.chainswap.app.db.BTCDeposits.model.schema.create,
-      fr.acinq.chainswap.app.db.Account2LNWithdrawals.model.schema.create
     )
     Await.result(Config.db.run(setup.transactionally), 10.seconds)
   }

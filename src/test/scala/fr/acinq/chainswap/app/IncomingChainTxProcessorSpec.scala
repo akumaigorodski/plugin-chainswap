@@ -23,19 +23,20 @@ class IncomingChainTxProcessorSpec extends AnyFunSuite {
 
   test("Removing address-unmatched btc records from db") {
     ChainSwapTestUtils.resetEntireDatabase()
-    Blocking.txWrite(Addresses.insertCompiled += ("btc-address", "account-id-1"), Config.db)
+    Blocking.txWrite(Addresses.insertCompiled += ("real-btc-address-1", "account-id-1"), Config.db)
+    Blocking.txWrite(Addresses.insertCompiled += ("real-btc-address-2", "account-id-1"), Config.db)
     Blocking.txWrite(Addresses.insertCompiled += ("not-reverse-matched-btc-address", "account-id-2"), Config.db)
-    Blocking.txWrite(BTCDeposits.insert("btc-address", 1L, "txid1", 12D, 0L), Config.db)
-    Blocking.txWrite(BTCDeposits.insert("btc-address", 1L, "txid1", 24D, 0L), Config.db)
-    Blocking.txWrite(BTCDeposits.insert("not-matched-btc-address", 1L, "txid1", 12D, 0L), Config.db)
-    val txs1 = Blocking.txRead(BTCDeposits.findAllWaitingCompiled(10, System.currentTimeMillis - 1000000L).result, Config.db).map(_._2)
-    assert(txs1 == Vector("btc-address", "not-matched-btc-address"))
+    Blocking.txWrite(BTCDeposits.insert("real-btc-address-1", 1L, "txid1", 1200000L, 0L), Config.db)
+    Blocking.txWrite(BTCDeposits.insert("real-btc-address-2", 1L, "txid1", 2400000L, 0L), Config.db)
+    Blocking.txWrite(BTCDeposits.insert("not-matched-btc-address", 1L, "txid1", 120000000L, 0L), Config.db)
+    val txs1 = Blocking.txRead(BTCDeposits.findAllWaitingCompiled(10, System.currentTimeMillis - 1000000L).result, Config.db).map(_._4)
+    assert(txs1 == Vector("real-btc-address-1", "real-btc-address-2", "not-matched-btc-address"))
     Blocking.txWrite(BTCDeposits.clearUp, Config.db)
-    val txs2 = Blocking.txRead(BTCDeposits.findAllWaitingCompiled(10, System.currentTimeMillis - 1000000L).result, Config.db).map(_._2)
-    assert(txs2 == Vector("btc-address"))
+    val txs2 = Blocking.txRead(BTCDeposits.findAllWaitingCompiled(10, System.currentTimeMillis - 1000000L).result, Config.db).map(_._4)
+    assert(txs2 == Vector("real-btc-address-1", "real-btc-address-2"))
   }
 
-  test("Bitcoin stuff") {
+  test("Transaction is correctly parsed") {
     val raw = "020000000001015b183c70e939390c94e1c9a3473ebe9f72585ed024ff343be9fe08a91e740d450100000017160014f6805441b9d04dc32056ea8dfee35fe9475a3e80feffffff02d0070000000000" +
       "001976a914a4857797987879ef8e4c4b04f6fa2552cf5b473a88ac7a3909ad0100000017a9143f59bad48c2edb3804a4482c9fb2d3c32e9f258987024730440220277c443a682bce52e98d2f7bed9f0ff79bcf" +
       "f24d0c95ba330d8aa1aca62ab0320220106eb9a1ddd048050e32b92fd21caf10da9241947d267820b36f65837a6e58730121026ebef7b7bc5286225649c17f3fa6164221574af0efa23f1f12ad5d8a1b928fbe45411a00"
@@ -90,12 +91,12 @@ class IncomingChainTxProcessorSpec extends AnyFunSuite {
     assert(event2.depth == 0L)
 
     // Simulate some busy work
-    assert(Blocking.txRead(BTCDeposits.findSumCompleteForAccountCompiled(accountId1, 1L).result, Config.db).isEmpty)
+    assert(Blocking.txRead(BTCDeposits.findWithdrawableForAccountCompiled(accountId1, 1L).result, Config.db).isEmpty)
     (171868 to 172068).foreach(num => listener.onNewBlock(Config.vals.bitcoinAPI.getBlock(num)))
     listener.onNewBlock(Config.vals.bitcoinAPI.getBlock(rawTx1ConfirmedAtBlock))
-    assert(eventListener.expectMsgType[ChainDepositReceived].amount == Satoshi(3560000))
+    assert(eventListener.expectMsgType[ChainDepositReceived].amountSat == 3560000L)
 
-    assert(Blocking.txRead(BTCDeposits.findSumCompleteForAccountCompiled(accountId1, 1L).result, Config.db).contains(3560000))
+    assert(Blocking.txRead(BTCDeposits.findWithdrawableForAccountCompiled(accountId1, 1L).result, Config.db).map(ChainDeposit.tupled).map(_.amountSat) == Seq(3560000L))
     assert(Blocking.txRead(BTCDeposits.findAllWaitingCompiled(2L, 0L).result, Config.db).size == 1)
 
     val cleanedResult = Blocking.txRead(BTCDeposits.model.map(_.depth).result, Config.db)
@@ -103,7 +104,7 @@ class IncomingChainTxProcessorSpec extends AnyFunSuite {
 
     // Simulate malfuction: same block sent twice
     listener.onNewBlock(Config.vals.bitcoinAPI.getBlock(rawTx1ConfirmedAtBlock))
-    assert(Blocking.txRead(BTCDeposits.findSumCompleteForAccountCompiled(accountId1, 1L).result, Config.db).contains(3560000))
+    assert(Blocking.txRead(BTCDeposits.findWithdrawableForAccountCompiled(accountId1, 1L).result, Config.db).map(ChainDeposit.tupled).map(_.amountSat) == Seq(3560000L))
     assert(Blocking.txRead(BTCDeposits.findAllWaitingCompiled(2L, 0L).result, Config.db).size == 1)
     val cleanedResult1 = Blocking.txRead(BTCDeposits.model.map(_.depth).result, Config.db)
     assert(cleanedResult.count(_ > Config.vals.depthThreshold) == 1 && cleanedResult1.size == 2)
@@ -112,12 +113,12 @@ class IncomingChainTxProcessorSpec extends AnyFunSuite {
     (171868 to 172068).foreach(num => listener.onNewBlock(Config.vals.bitcoinAPI.getBlock(num)))
     listener.onNewBlock(Config.vals.bitcoinAPI.getBlock(rawTx1ConfirmedAtBlock))
     synchronized(wait(500L))
-    assert(Blocking.txRead(BTCDeposits.findSumCompleteForAccountCompiled(accountId1, 1L).result, Config.db).contains(3560000))
-    assert(Blocking.txRead(BTCDeposits.findSumCompleteForAccountCompiled(accountId2, 1L).result, Config.db).isEmpty)
+    assert(Blocking.txRead(BTCDeposits.findWithdrawableForAccountCompiled(accountId1, 1L).result, Config.db).map(ChainDeposit.tupled).map(_.amountSat) == Seq(3560000L))
+    assert(Blocking.txRead(BTCDeposits.findWithdrawableForAccountCompiled(accountId2, 1L).result, Config.db).isEmpty)
     assert(Blocking.txRead(BTCDeposits.findAllWaitingCompiled(2L, 0L).result, Config.db).size == 1)
     val cleanedResult2 = Blocking.txRead(BTCDeposits.model.map(_.depth).result, Config.db)
     assert(cleanedResult.count(_ > Config.vals.depthThreshold) == 1 && cleanedResult2.size == 2)
 
-    assert(Blocking.txRead(BTCDeposits.findWaitingForAccountCompiled(accountId2, 1L, 0L).result, Config.db).map(BTCDeposit.tupled).map(_.toPendingDeposit).head.btcAddress == rawAddress2)
+    assert(Blocking.txRead(BTCDeposits.findWaitingForAccountCompiled(accountId2, 1L, 0L).result, Config.db).map(ChainDeposit.tupled).head.btcAddress == rawAddress2)
   }
 }
