@@ -17,6 +17,10 @@ import scala.concurrent.Await
 
 
 class SwapInProcessorSpec extends AnyFunSuite {
+
+  // This requires a running bitcoind testnet with balance of 0.1 BTC
+  // This requires a locally running pg instance
+
   test("Create new address, reuse it") {
     ChainSwapTestUtils.resetEntireDatabase()
     implicit val system: ActorSystem = ActorSystem("test-actor-system")
@@ -30,6 +34,10 @@ class SwapInProcessorSpec extends AnyFunSuite {
 
     swapInProcessor ! SwapInProcessor.SwapInRequestFrom(userId)
     assert(eventListener.expectMsgType[SwapInProcessor.SwapInResponseTo].response.btcAddress === address) // Existing address is reused
+
+    Blocking.txWrite(Addresses.insertCompiled += ("new-bitcoin-address", userId), Config.db) // Use a fresh address
+    swapInProcessor ! SwapInProcessor.SwapInRequestFrom(userId)
+    assert(eventListener.expectMsgType[SwapInProcessor.SwapInResponseTo].response.btcAddress === "new-bitcoin-address")
   }
 
   test("Deposit on-chain, withdraw off-chain") {
@@ -64,8 +72,8 @@ class SwapInProcessorSpec extends AnyFunSuite {
     val oneMilSat = "lntb10m1p0cqg40rzjqges6y6c0dn6shq2xm4qq8zdhg2te4ydm2yc3aesxf6mqs9lld4t6q3xghlyujw62cqqqqlgqqqqqeqqjqdqqcqzgapp5e46hd8z4dwh9z6t8uecls9phc9txdkvym52qc4syz7qs5" +
       "3r5sspsxqyz5vp8xmsusrvjuqt4knl64s437txwnkrhexa2zs7arm9z0zujwlsd26sh6dy6p3kyfjkjrm0hg2jg43eaccfeut8cm26e36vchhwc7f8g3spev5720"
 
-    swapInProcessor ! SwapInProcessor.SwapInWithdrawRequestFrom(SwapInPaymentRequest(oneMilSat, id = deposit.id), userId)
-    assert(eventListener.expectMsgType[SwapInProcessor.SwapInWithdrawRequestDeniedTo].reason == SwapInPaymentDenied.NO_WITHDRAWABLE_TX_FOUND)
+    swapInProcessor ! SwapInProcessor.SwapInWithdrawRequestFrom(SwapInPaymentRequest(oneMilSat, id = deposit.id), userId) // User attempts to withdraw an unconfirmed tx
+    assert(eventListener.expectMsgType[SwapInProcessor.SwapInWithdrawRequestDeniedTo].reason == SwapInPaymentDenied.NO_WITHDRAWABLE_TX)
 
     listener.onNewBlock(Config.vals.bitcoinAPI.getBlock(rawTx1ConfirmedAtBlock)) // get that tx confirmed, incomingChainTxProcessor sends a message to swapInProcessor
     val SwapInState(Nil, List(deposit1), Nil) = eventListener.expectMsgType[SwapInProcessor.AccountStatusTo].state // swapInProcessor in turn informs parent about updated account status
@@ -78,10 +86,10 @@ class SwapInProcessorSpec extends AnyFunSuite {
     assert(eventListener.expectMsgType[SwapInProcessor.SwapInWithdrawRequestDeniedTo].reason == SwapInPaymentDenied.INVOICE_TX_AMOUNT_MISMATCH)
 
     swapInProcessor ! SwapInProcessor.SwapInWithdrawRequestFrom(SwapInPaymentRequest(oneMilSat, id = 2), userId) // Non-existing txid
-    assert(eventListener.expectMsgType[SwapInProcessor.SwapInWithdrawRequestDeniedTo].reason == SwapInPaymentDenied.NO_WITHDRAWABLE_TX_FOUND)
+    assert(eventListener.expectMsgType[SwapInProcessor.SwapInWithdrawRequestDeniedTo].reason == SwapInPaymentDenied.NO_WITHDRAWABLE_TX)
 
     swapInProcessor ! SwapInProcessor.SwapInWithdrawRequestFrom(SwapInPaymentRequest(oneMilSat, id = deposit.id), "user-id-2") // Different user id
-    assert(eventListener.expectMsgType[SwapInProcessor.SwapInWithdrawRequestDeniedTo].reason == SwapInPaymentDenied.NO_WITHDRAWABLE_TX_FOUND)
+    assert(eventListener.expectMsgType[SwapInProcessor.SwapInWithdrawRequestDeniedTo].reason == SwapInPaymentDenied.NO_WITHDRAWABLE_TX)
 
     val exactAmountPr = "lntb35600u1p07fvlrpp5zlvgze2kh942uej28pa0zxsyf5tgfu3pt99g3yfe42mqe2frq9hsdqqxqrrsscqp79qy9qsqsp5vhgf96k9vc99ej6ac" +
       "hdezjthup3sk0kx93tuykwy56wg0s2nvzfsr8vkm80taak7q3zxwqy4r77eyrqldwu9qhhywzna28jr5lkg00gkd9jyl9x73aw6zal3mpdlt0x5qmtnexptvxclh3fn2uyukqs02tspga3m5v"

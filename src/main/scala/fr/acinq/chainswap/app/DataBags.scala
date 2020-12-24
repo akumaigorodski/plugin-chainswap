@@ -26,7 +26,7 @@ case class SwapInPaymentRequest(paymentRequest: String, id: Long) extends SwapIn
 object SwapInPaymentDenied {
   final val WITHDRAWAL_ALREADY_IN_FLIGHT = 1L
   final val INVOICE_TX_AMOUNT_MISMATCH = 2L
-  final val NO_WITHDRAWABLE_TX_FOUND = 3L
+  final val NO_WITHDRAWABLE_TX = 3L
   final val INVALID_INVOICE = 4L
 }
 
