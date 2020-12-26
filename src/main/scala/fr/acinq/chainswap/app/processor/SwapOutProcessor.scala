@@ -28,7 +28,7 @@ object SwapOutProcessor {
 
   case class SwapOutRequestFrom(request: SwapOutTransactionRequest, accountId: String)
   case class SwapOutResponseTo(response: SwapOutTransactionResponse, accountId: String)
-  case class SwapOutDeniedTo(bitcoinAddress: String, reason: String, accountId: String)
+  case class SwapOutDeniedTo(bitcoinAddress: String, reason: Long, accountId: String)
 
   case class SwapOutRequestAndFee(request: SwapOutTransactionRequest, accountId: String, fee: Satoshi) {
     val totalAmount: MilliSatoshi = (request.amount + fee).toMilliSatoshi
@@ -66,18 +66,20 @@ class SwapOutProcessor(vals: Vals, kit: Kit, getPreimage: String => ByteVector32
       val feeOpt = findFee(request.feerateKey, request.blockTarget)
       val addressCheck = Try(addressToPublicKeyScript(request.btcAddress, kit.nodeParams.chainHash).head)
 
+
+
       if (addressCheck.isFailure) {
         logger.info(s"PLGN ChainSwap, SwapOutRequestFrom, fail=invalid chain address, address=${request.btcAddress}, account=$accountId")
-        context.parent ! SwapOutDeniedTo(request.btcAddress, "Provided bitcoin address should be valid", accountId)
+        context.parent ! SwapOutDeniedTo(request.btcAddress, SwapOutTransactionDenied.INVALID_BITCOIN_ADDRESS, accountId)
       } else if (feeOpt.isEmpty) {
         logger.info(s"PLGN ChainSwap, SwapOutRequestFrom, fail=could not find a chain feerate, account=$accountId")
-        context.parent ! SwapOutDeniedTo(request.btcAddress, "Chain feerates have expired, please try again", accountId)
+        context.parent ! SwapOutDeniedTo(request.btcAddress, SwapOutTransactionDenied.UNKNOWN_CHAIN_FEERATES, accountId)
       } else if (request.amount > providerCanHandle) {
         logger.info(s"PLGN ChainSwap, SwapOutRequestFrom, fail=depleted chain wallet, balance=${vals.bitcoinAPI.getBalance} btc, account=$accountId")
-        context.parent ! SwapOutDeniedTo(request.btcAddress, "Currently we don't have enough chain funds to handle your order, please try again later", accountId)
+        context.parent ! SwapOutDeniedTo(request.btcAddress, SwapOutTransactionDenied.CAN_NOT_HANDLE_AMOUNT, accountId)
       } else if (request.amount < vals.chainMinWithdrawSat.sat) {
         logger.info(s"PLGN ChainSwap, SwapOutRequestFrom, fail=too small amount, asked=${request.amount}, account=$accountId")
-        context.parent ! SwapOutDeniedTo(request.btcAddress, s"Payment amount should be larger than ${vals.chainMinWithdrawSat} sat", accountId)
+        context.parent ! SwapOutDeniedTo(request.btcAddress, SwapOutTransactionDenied.AMOUNT_TOO_SMALL, accountId)
       } else {
         val preimage = getPreimage(accountId)
         val paymentHash = Crypto.sha256(preimage)

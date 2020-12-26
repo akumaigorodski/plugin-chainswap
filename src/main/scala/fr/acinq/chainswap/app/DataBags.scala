@@ -49,4 +49,11 @@ case class SwapOutTransactionRequest(amount: Satoshi, btcAddress: String, blockT
 
 case class SwapOutTransactionResponse(paymentRequest: String, amount: Satoshi, fee: Satoshi) extends SwapOut with ChainSwapMessage
 
-case class SwapOutTransactionDenied(btcAddress: String, reason: String) extends SwapOut with ChainSwapMessage
+object SwapOutTransactionDenied {
+  final val INVALID_BITCOIN_ADDRESS = 1L
+  final val UNKNOWN_CHAIN_FEERATES = 2L
+  final val CAN_NOT_HANDLE_AMOUNT = 3L
+  final val AMOUNT_TOO_SMALL = 4L
+}
+
+case class SwapOutTransactionDenied(btcAddress: String, reason: Long) extends SwapOut with ChainSwapMessage

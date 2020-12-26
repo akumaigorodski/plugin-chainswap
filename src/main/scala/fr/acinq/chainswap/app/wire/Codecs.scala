@@ -78,7 +78,7 @@ object Codecs {
 
   private val swapOutTransactionDeniedCodec = {
     ("btcAddress" | text) ::
-      ("reason" | text)
+      ("reason" | uint32)
   }.as[SwapOutTransactionDenied]
 
   def decode(wrap: UnknownMessage): Attempt[ChainSwapMessage] = {
