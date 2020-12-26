@@ -64,50 +64,6 @@ public class BitcoinJSONRPCClient implements BitcoindRpcClient {
     authStr = rpc.getUserInfo() == null ? null : String.valueOf(Base64Coder.encode(rpc.getUserInfo().getBytes(Charset.forName("ISO8859-1"))));
   }
 
-  public static final URL DEFAULT_JSONRPC_URL;
-  public static final URL DEFAULT_JSONRPC_TESTNET_URL;
-
-  static {
-    String user = "user";
-    String password = "pass";
-    String host = "localhost";
-    String port = null;
-
-    try {
-      File f;
-      File home = new File(System.getProperty("user.home"));
-
-      if ((f = new File(home, ".bitcoin" + File.separatorChar + "bitcoin.conf")).exists()) {
-      } else if ((f = new File(home, "AppData" + File.separatorChar + "Roaming" + File.separatorChar + "Bitcoin" + File.separatorChar + "bitcoin.conf")).exists()) {
-      } else {
-        f = null;
-      }
-
-      if (f != null) {
-        logger.fine("Bitcoin configuration file found");
-
-        Properties p = new Properties();
-        try (FileInputStream i = new FileInputStream(f)) {
-          p.load(i);
-        }
-
-        user = p.getProperty("rpcuser", user);
-        password = p.getProperty("rpcpassword", password);
-        host = p.getProperty("rpcconnect", host);
-        port = p.getProperty("rpcport", port);
-      }
-    } catch (Exception ex) {
-      logger.log(Level.SEVERE, null, ex);
-    }
-
-    try {
-      DEFAULT_JSONRPC_URL = new URL("http://" + user + ':' + password + "@" + host + ":" + (port == null ? "8332" : port) + "/");
-      DEFAULT_JSONRPC_TESTNET_URL = new URL("http://" + user + ':' + password + "@" + host + ":" + (port == null ? "18332" : port) + "/");
-    } catch (MalformedURLException ex) {
-      throw new RuntimeException(ex);
-    }
-  }
-
   private HostnameVerifier hostnameVerifier = null;
   private SSLSocketFactory sslSocketFactory = null;
 
@@ -177,8 +133,7 @@ public class BitcoinJSONRPCClient implements BitcoindRpcClient {
           ((HttpsURLConnection) conn).setSSLSocketFactory(sslSocketFactory);
       }
 
-//            conn.connect();
-      ((HttpURLConnection) conn).setRequestProperty("Authorization", "Basic " + authStr);
+      conn.setRequestProperty("Authorization", "Basic " + authStr);
       byte[] r = prepareRequest(method, o);
       logger.log(Level.FINE, "Bitcoin JSON-RPC request:\n{0}", new String(r, QUERY_CHARSET));
       conn.getOutputStream().write(r);

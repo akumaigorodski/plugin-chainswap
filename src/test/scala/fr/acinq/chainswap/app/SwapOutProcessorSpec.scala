@@ -13,7 +13,7 @@ import scodec.bits.ByteVector
 
 class SwapOutProcessorSpec extends AnyFunSuite {
 
-  // This requires a running bitcoind testnet with balance of 0.1 BTC
+  // This requires a running bitcoind testnet with balance of ~0.1 BTC
 
   test("Deposit off-chain, withdraw on-chain") {
     ChainSwapTestUtils.resetEntireDatabase()
@@ -30,7 +30,9 @@ class SwapOutProcessorSpec extends AnyFunSuite {
 
     // Client sends SwapOutRequest
     swapOutProcessor ! SwapOutProcessor.ChainInfoRequestFrom(userId)
-    val feerateKey = eventListener.expectMsgType[SwapOutProcessor.ChainInfoResponseTo].info.feerates.feerateKey
+    val info = eventListener.expectMsgType[SwapOutProcessor.ChainInfoResponseTo].info
+    val feerateKey = info.feerates.feerateKey
+    println(info.providerCanHandle)
 
     swapOutProcessor ! SwapOutProcessor.SwapOutRequestFrom(SwapOutTransactionRequest(100000L.sat, btcAddress = "wrong-address", blockTarget = 36, feerateKey), userId)
     eventListener.expectMsgType[SwapOutProcessor.SwapOutDeniedTo] // Wrong address

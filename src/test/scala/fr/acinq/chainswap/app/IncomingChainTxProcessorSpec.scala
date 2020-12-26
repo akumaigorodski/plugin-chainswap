@@ -14,7 +14,7 @@ import akka.testkit.TestProbe
 
 class IncomingChainTxProcessorSpec extends AnyFunSuite {
 
-  // This requires a running bitcoind testnet with balance of 0.1 BTC
+  // This requires a running bitcoind testnet
   // This requires a locally running pg instance
 
   test("Database integrity") {
