@@ -29,7 +29,7 @@ object SwapInPaymentDenied {
   final val INVALID_INVOICE = 4L
 }
 
-case class SwapInPaymentDenied(paymentRequest: String, reason: Long) extends SwapIn with ChainSwapMessage
+case class SwapInPaymentDenied(id: Long, reason: Long) extends SwapIn with ChainSwapMessage
 
 case class ChainDeposit(id: Long, lnPaymentId: Option[String], lnStatus: Long, btcAddress: String, outIndex: Long, txid: String, amountSat: Long, depth: Long, stamp: Long)
 

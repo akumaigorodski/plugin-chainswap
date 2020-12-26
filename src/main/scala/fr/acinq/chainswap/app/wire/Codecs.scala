@@ -23,7 +23,7 @@ object Codecs {
   }.as[SwapInPaymentRequest]
 
   private val swapInPaymentDeniedCodec = {
-    ("paymentRequest" | text) ::
+    ("id" | uint32) ::
       ("reason" | uint32)
   }.as[SwapInPaymentDenied]
 

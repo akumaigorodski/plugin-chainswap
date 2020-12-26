@@ -29,7 +29,7 @@ object SwapInProcessor {
   case class SwapInResponseTo(response: SwapInResponse, accountId: String)
 
   case class SwapInWithdrawRequestFrom(request: SwapInPaymentRequest, accountId: String)
-  case class SwapInWithdrawRequestDeniedTo(paymentRequest: String, reason: Long, accountId: String)
+  case class SwapInWithdrawRequestDeniedTo(id: Long, reason: Long, accountId: String)
 }
 
 class SwapInProcessor(vals: Vals, kit: Kit, db: PostgresProfile.backend.Database) extends Actor with Logging {
@@ -100,7 +100,7 @@ class SwapInProcessor(vals: Vals, kit: Kit, db: PostgresProfile.backend.Database
       Try(PaymentRequest read request.paymentRequest) match {
         case _ if inFlightForAccount.get(accountId).exists(_.id == request.id) =>
           logger.info(s"PLGN ChainSwap, WithdrawBTCLN, fail=withdrawal already in-flight, id=${request.id}, account=$accountId")
-          context.parent ! SwapInWithdrawRequestDeniedTo(request.paymentRequest, SwapInPaymentDenied.WITHDRAWAL_ALREADY_IN_FLIGHT, accountId)
+          context.parent ! SwapInWithdrawRequestDeniedTo(request.id, SwapInPaymentDenied.WITHDRAWAL_ALREADY_IN_FLIGHT, accountId)
 
         case Success(pr) =>
           withdrawableForAccount.get(accountId).find(_.id == request.id) match {
@@ -115,16 +115,16 @@ class SwapInProcessor(vals: Vals, kit: Kit, db: PostgresProfile.backend.Database
 
             case Some(deposit) =>
               logger.info(s"PLGN ChainSwap, WithdrawBTCLN, fail=amount mismatch, amountMsat=${pr.amount}, txSat=${deposit.amountSat}, account=$accountId")
-              context.parent ! SwapInWithdrawRequestDeniedTo(request.paymentRequest, SwapInPaymentDenied.INVOICE_TX_AMOUNT_MISMATCH, accountId)
+              context.parent ! SwapInWithdrawRequestDeniedTo(request.id, SwapInPaymentDenied.INVOICE_TX_AMOUNT_MISMATCH, accountId)
 
             case None =>
               logger.info(s"PLGN ChainSwap, WithdrawBTCLN, fail=no withdrawable tx found, id=${request.id}, account=$accountId")
-              context.parent ! SwapInWithdrawRequestDeniedTo(request.paymentRequest, SwapInPaymentDenied.NO_WITHDRAWABLE_TX, accountId)
+              context.parent ! SwapInWithdrawRequestDeniedTo(request.id, SwapInPaymentDenied.NO_WITHDRAWABLE_TX, accountId)
           }
 
         case Failure(error) =>
           logger.info(s"PLGN ChainSwap, WithdrawBTCLN, fail=${error.getMessage}, id=${request.id}, account=$accountId")
-          context.parent ! SwapInWithdrawRequestDeniedTo(request.paymentRequest, SwapInPaymentDenied.INVALID_INVOICE, accountId)
+          context.parent ! SwapInWithdrawRequestDeniedTo(request.id, SwapInPaymentDenied.INVALID_INVOICE, accountId)
       }
 
     case message: PaymentFailed =>
