@@ -20,7 +20,7 @@ class WireSpec extends AnyFunSuite {
     val inner2 = SwapOutFeerates(KeyedBlockTargetAndFee(List(b1, b2), randomBytes32), 10000000000L.sat, 50000L.sat)
     assert(decode(toUnknownMessage(inner2)).require === inner2)
 
-    val sor = SwapOutTransactionResponse("00" * 512, 100000000000L.sat, 90000.sat)
+    val sor = SwapOutTransactionResponse("00" * 512, 100000000000L.sat, "1RustyRX2oai4EYYDpQGWvEL62BBGqN9T", 90000.sat)
     assert(decode(toUnknownMessage(sor)).require === sor)
 
     val swd = SwapInPaymentDenied(paymentRequest = "00" * 512, reason = SwapInPaymentDenied.NO_WITHDRAWABLE_TX)

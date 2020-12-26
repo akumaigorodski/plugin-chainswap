@@ -47,7 +47,7 @@ case class SwapOutFeerates(feerates: KeyedBlockTargetAndFee, providerCanHandle: 
 
 case class SwapOutTransactionRequest(amount: Satoshi, btcAddress: String, blockTarget: Int, feerateKey: ByteVector32) extends SwapOut with ChainSwapMessage
 
-case class SwapOutTransactionResponse(paymentRequest: String, amount: Satoshi, fee: Satoshi) extends SwapOut with ChainSwapMessage
+case class SwapOutTransactionResponse(paymentRequest: String, amount: Satoshi, btcAddress: String, fee: Satoshi) extends SwapOut with ChainSwapMessage
 
 object SwapOutTransactionDenied {
   final val INVALID_BITCOIN_ADDRESS = 1L

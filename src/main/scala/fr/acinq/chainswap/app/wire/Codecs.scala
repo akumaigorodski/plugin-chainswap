@@ -73,6 +73,7 @@ object Codecs {
   private val swapOutTransactionResponseCodec = {
     ("paymentRequest" | text) ::
       ("amount" | satoshi) ::
+      ("btcAddress" | text) ::
       ("fee" | satoshi)
   }.as[SwapOutTransactionResponse]
 

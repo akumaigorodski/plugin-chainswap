@@ -89,7 +89,7 @@ class SwapOutProcessor(vals: Vals, kit: Kit, getPreimage: String => ByteVector32
         logger.info(s"PLGN ChainSwap, SwapOutRequestFrom, success address=${request.btcAddress}, amountSat=${request.amount.toLong}, feeSat=${feeOpt.get.fee.toLong}, hash=$paymentHash, account=$accountId")
 
         val invoice = Await.result(kit.paymentHandler ? invoiceAsk, span).asInstanceOf[PaymentRequest]
-        val reply = SwapOutTransactionResponse(PaymentRequest.write(invoice), request.amount, feeOpt.get.fee)
+        val reply = SwapOutTransactionResponse(PaymentRequest.write(invoice), request.amount, request.btcAddress, feeOpt.get.fee)
         context.parent ! SwapOutResponseTo(reply, accountId)
         pendingRequests.put(paymentHash, fixedRequest)
       }
